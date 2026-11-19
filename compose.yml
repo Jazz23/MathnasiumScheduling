@@ -1,7 +1,0 @@
-services:
-  app:
-    # Set APP_TAG to a commit SHA to pin a specific build
-    image: ghcr.io/jazz23/mathnasiumscheduling:${APP_TAG:-latest}
-    restart: unless-stopped
-    ports:
-      - "3000:3000"
