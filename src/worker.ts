@@ -1,30 +1,28 @@
 // Cloudflare Worker entry. Static assets (the built React app in dist/) are
-// served by Workers Static Assets; only /api/* requests reach this handler
-// (see run_worker_first in wrangler.jsonc).
+// served by Workers Static Assets; only /api/*, /radius/* (the Radius
+// proxy) and /sling/* (the Sling proxy) requests reach this handler (see run_worker_first in wrangler.jsonc).
 
-// Import Workers types as a module (not ambient) so they don't clash with
-// bun-types' global Request/Response.
-import type { D1Database } from "@cloudflare/workers-types/index.ts";
+import type { Env } from "./server/env";
+import { handleAuth } from "./server/auth";
+import { handleRadiusProxy } from "./server/radiusProxy";
+import { handleSling } from "./server/sling";
 
-export interface Env {
-  ASSETS: { fetch(request: Request): Promise<Response> };
-  DB: D1Database;
-}
+export type { Env };
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    const { pathname } = new URL(request.url);
+    const url = new URL(request.url);
+    const { pathname } = url;
 
-    if (pathname === "/api/hello") {
-      if (request.method === "GET" || request.method === "PUT") {
-        return Response.json({ message: "Hello, world!", method: request.method });
-      }
-      return new Response("Method Not Allowed", { status: 405 });
-    }
+    const proxied = await handleRadiusProxy(request, env, url);
+    if (proxied) return proxied;
 
-    const match = pathname.match(/^\/api\/hello\/([^/]+)$/);
-    if (match) {
-      return Response.json({ message: `Hello, ${decodeURIComponent(match[1]!)}!` });
+    const sling = await handleSling(request, env, url);
+    if (sling) return sling;
+
+    if (pathname.startsWith("/api/auth/")) {
+      const response = await handleAuth(request, env, pathname);
+      if (response) return response;
     }
 
     if (pathname === "/api/db/health") {

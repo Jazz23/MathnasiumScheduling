@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
+    "dev": "bun dev.ts",
+    "dev:worker": "wrangler dev",
     "build": "rm -rf dist && bun build ./src/index.html --outdir=dist --target=browser --minify --define:process.env.NODE_ENV='\"production\"' --env='BUN_PUBLIC_*'",
     "typecheck": "bun check",
     "deploy": "wrangler deploy",

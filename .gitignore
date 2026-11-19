@@ -1,3 +1,5 @@
+.playwright-mcp
+
 # dependencies (bun install)
 node_modules
 
@@ -35,3 +37,6 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # wrangler
 .wrangler
+
+# wrangler local secrets
+.dev.vars*

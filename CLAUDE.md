@@ -1,4 +1,5 @@
 - Always Git Pull at the start of a new session.
+- Always assume that a user is already running a dev server, but you can check if necessary as this may not be the case.
 - The project is made with react using bun's native tooling, so no framework or bundler is invovled.
 - The current design and the decisions behind it are in docs/ARCHITECTURE.md. Read this before making any major changes or before grilling.
 - Always use Context7 to fetch up todate documentation for any library you intend on using, such as bun itself.
