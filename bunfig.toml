@@ -1,6 +1,3 @@
-[serve.static]
-env = "BUN_PUBLIC_*"
-
 [lint]
 # typeAware = true   # also run the rules that need types
 

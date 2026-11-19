@@ -1,0 +1,30 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "mathnasium-scheduling",
+  "main": "./src/worker.ts",
+  "compatibility_date": "2026-11-19",
+  "upload_source_maps": true,
+  // Bundles the React frontend into dist/. Runs before `wrangler deploy`, on
+  // `wrangler dev` start, and again whenever a file in src/ changes.
+  "build": {
+    "command": "bun run build",
+    "watch_dir": "src"
+  },
+  "assets": {
+    "directory": "./dist/",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "mathnasium-scheduling",
+      "database_id": "9a2d2066-3065-4cbf-a701-a4bb2c6b8c0e",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}

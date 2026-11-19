@@ -4,19 +4,24 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "bun --hot src/index.ts",
-    "build": "bun build ./src/index.html --outdir=dist --sourcemap --target=browser --minify --define:process.env.NODE_ENV='\"production\"' --env='BUN_PUBLIC_*'",
-    "start": "NODE_ENV=production bun src/index.ts",
-    "typecheck": "bun check"
+    "dev": "wrangler dev",
+    "build": "rm -rf dist && bun build ./src/index.html --outdir=dist --target=browser --minify --define:process.env.NODE_ENV='\"production\"' --env='BUN_PUBLIC_*'",
+    "typecheck": "bun check",
+    "deploy": "wrangler deploy",
+    "db:migrate": "wrangler d1 migrations apply mathnasium-scheduling --remote",
+    "db:migrate:local": "wrangler d1 migrations apply mathnasium-scheduling --local",
+    "db:migration:new": "wrangler d1 migrations create mathnasium-scheduling"
   },
   "dependencies": {
     "react": "^19",
     "react-dom": "^19"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "5.20261119.1",
+    "@types/bun": "latest",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "@types/bun": "latest"
+    "wrangler": "4.165.0"
   },
   "peerDependencies": {
     "typescript": "^7"

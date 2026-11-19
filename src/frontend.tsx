@@ -6,7 +6,7 @@
  */
 
 import { StrictMode } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import { createRoot } from "react-dom/client";
 import { App } from "./App";
 
 const elem = document.getElementById("root")!;
@@ -16,6 +16,4 @@ const app = (
   </StrictMode>
 );
 
-// https://bun.com/docs/bundler/hot-reloading#import-meta-hot-data
-type HotData = { root?: Root };
-((import.meta.hot.data as HotData).root ??= createRoot(elem)).render(app);
+createRoot(elem).render(app);

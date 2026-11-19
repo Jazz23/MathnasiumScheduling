@@ -1,29 +1,18 @@
-# bun-react-template
+# Mathnasium Scheduling
 
-To install dependencies:
-
-```bash
-bun install
-```
-
-To start a development server:
+React frontend bundled with Bun, served by a Cloudflare Worker (static assets + `/api/*` routes) backed by D1.
 
 ```bash
-bun dev
+bun install          # install dependencies
+bun run dev          # wrangler dev: rebuilds on src/ changes, local D1
+bun run deploy       # build + deploy to Cloudflare
+bun check            # type check
 ```
 
-To run for production:
+Database migrations (D1, files in `migrations/`):
 
 ```bash
-bun start
+bun run db:migration:new <name>   # create a migration
+bun run db:migrate:local          # apply to the local dev database
+bun run db:migrate                # apply to the production database
 ```
-
-To type check:
-
-```bash
-bun check
-```
-
-Run `bun fmt` to format the code.
-
-This project was created using `bun init` in bun v1.4.4. [Bun](https://bun.com) is a fast all-in-one JavaScript runtime.
