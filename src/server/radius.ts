@@ -126,12 +126,39 @@ async function saveCookies(env: Env, accountId: number, jar: CookieJar) {
     .run();
 }
 
+function getAccount(env: Env, accountId: number) {
+  return env.DB.prepare(
+    "SELECT username, password_ciphertext, password_iv, radius_cookies FROM radius_accounts WHERE id = ?",
+  )
+    .bind(accountId)
+    .first<AccountRow>();
+}
+
+/**
+ * Signs in to Radius again with the account's stored password and saves the
+ * new cookies. Only the account's AccountLock calls this, so that requests
+ * that find an expired session at the same time share one sign-in.
+ */
+export async function radiusSignInAgain(env: Env, accountId: number): Promise<string> {
+  const account = await getAccount(env, accountId);
+  if (!account) throw new Error(`No Radius account ${accountId}`);
+  const password = await decryptPassword(
+    env.RADIUS_CREDENTIAL_KEY,
+    account.username,
+    account.password_ciphertext,
+    account.password_iv,
+  );
+  const jar = parseJar(await radiusLogin(account.username, password));
+  await saveCookies(env, accountId, jar);
+  return serializeJar(jar);
+}
+
 /**
  * Makes a request to Radius as the given account. Uses the stored session
  * cookies, and if Radius has expired them, signs in again with the stored
- * password and retries once. Redirects are not followed. Because the request
- * may be sent twice, pass a replayable body (string, URLSearchParams,
- * FormData), not a stream.
+ * password (through the account's AccountLock) and retries once. Redirects
+ * are not followed. Because the request may be sent twice, pass a replayable
+ * body (string, URLSearchParams, FormData), not a stream.
  */
 export async function radiusFetch(
   env: Env,
@@ -139,14 +166,11 @@ export async function radiusFetch(
   path: string,
   init: RequestInit = {},
 ): Promise<Response> {
-  const account = await env.DB.prepare(
-    "SELECT username, password_ciphertext, password_iv, radius_cookies FROM radius_accounts WHERE id = ?",
-  )
-    .bind(accountId)
-    .first<AccountRow>();
+  const account = await getAccount(env, accountId);
   if (!account) throw new Error(`No Radius account ${accountId}`);
 
   let jar = parseJar(account.radius_cookies);
+  const sentAt = Date.now();
   if (jar.size > 0) {
     const response = await radiusRequest(path, jar, init);
     if (!isLoginRedirect(response)) {
@@ -155,13 +179,8 @@ export async function radiusFetch(
     }
   }
 
-  const password = await decryptPassword(
-    env.RADIUS_CREDENTIAL_KEY,
-    account.username,
-    account.password_ciphertext,
-    account.password_iv,
-  );
-  jar = parseJar(await radiusLogin(account.username, password));
+  const lock = env.ACCOUNT_LOCK.getByName(String(accountId));
+  jar = parseJar(await lock.radiusSignIn(accountId, sentAt));
   const response = await radiusRequest(path, jar, init);
   absorbCookies(jar, response);
   await saveCookies(env, accountId, jar);

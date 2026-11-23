@@ -8,6 +8,9 @@ import { handleRadiusProxy } from "./server/radiusProxy";
 import { handleSling } from "./server/sling";
 
 export type { Env };
+// Classes the runtime loads by name (see wrangler.jsonc).
+export { AccountLock } from "./server/accountLock";
+export { SlingSignIn } from "./server/slingSignIn";
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {

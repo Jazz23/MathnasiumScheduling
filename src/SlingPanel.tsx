@@ -48,10 +48,21 @@ export function SlingPanel() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
       });
-      const data = (await res.json()) as { email?: string; error?: string };
-      if (!res.ok || !data.email) throw new Error(data.error ?? "Sign-in failed.");
+      const data = (await res.json()) as { signIn?: string; error?: string };
+      if (!res.ok || !data.signIn) throw new Error(data.error ?? "Sign-in failed.");
       setPassword("");
-      setStatus({ state: "linked", email: data.email });
+      // The sign-in runs in the background; check on it until it finishes.
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 3000));
+        const poll = await fetch(`/api/sling/sign-in/${encodeURIComponent(data.signIn)}`);
+        const result = (await poll.json()) as { state?: string; email?: string | null; error?: string };
+        if (!poll.ok) throw new Error(result.error ?? "Sign-in failed.");
+        if (result.state === "failed") throw new Error(result.error ?? "Sign-in failed.");
+        if (result.state === "done" && result.email) {
+          setStatus({ state: "linked", email: result.email });
+          return;
+        }
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Sign-in failed.");
     } finally {

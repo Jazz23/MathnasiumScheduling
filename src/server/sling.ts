@@ -24,6 +24,7 @@ import type { Env } from "./env";
 import type { HTMLRewriter as HTMLRewriterType } from "@cloudflare/workers-types/index.ts";
 import { getSessionAccount } from "./auth";
 import { decryptPassword, encryptPassword } from "./crypto";
+import type { SlingSignInParams } from "./accountLock";
 
 declare const HTMLRewriter: typeof HTMLRewriterType;
 
@@ -44,6 +45,8 @@ const SW_PATH = `${SLING_PREFIX}/__proxy-sw.js`;
 const PLACEHOLDER_TOKEN = "proxied";
 
 export class SlingLoginError extends Error {}
+/** The error name the SlingSignIn Workflow reports when Sling turns down the credentials. */
+export const SLING_LOGIN_ERROR = "SlingLoginError";
 
 // ---------------------------------------------------------------- captcha
 
@@ -65,9 +68,11 @@ async function solveCaptcha(env: Env): Promise<string> {
     clientKey: env.CAPMONSTER_API_KEY,
     task: { type: "RecaptchaV2Task", websiteURL: LOGIN_PAGE, websiteKey: RECAPTCHA_SITE_KEY },
   });
+  // Checks every 5 s for up to 2 min: at most 24 checks, which keeps a sign-in
+  // and one retry within the Free plan's 50 outgoing requests per Workflow.
   const deadline = Date.now() + 120_000;
   while (Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, 3000));
+    await new Promise((r) => setTimeout(r, 5000));
     const result = await capmonster<{ status: string; solution?: { gRecaptchaResponse: string } }>("getTaskResult", {
       clientKey: env.CAPMONSTER_API_KEY,
       taskId,
@@ -131,11 +136,70 @@ async function saveToken(env: Env, accountId: number, token: string, orgId?: num
     .run();
 }
 
-async function relogin(env: Env, accountId: number, row: SlingRow): Promise<string> {
+/**
+ * Signs in to Sling and saves the result. Runs inside the SlingSignIn
+ * Workflow. With `link`, saves those credentials as the account's Sling link;
+ * otherwise signs in again with the stored ones. Throws SlingLoginError if
+ * Sling turns the credentials down.
+ */
+export async function slingSignInAndSave(env: Env, { accountId, link }: SlingSignInParams): Promise<void> {
+  if (link) {
+    const password = await decryptPassword(env.RADIUS_CREDENTIAL_KEY, aad(link.email), link.ciphertext, link.iv);
+    const session = await slingLogin(env, link.email, password);
+    await env.DB.prepare(
+      `INSERT INTO sling_accounts (account_id, email, password_ciphertext, password_iv, sling_token, org_id, sling_token_updated_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, unixepoch())
+       ON CONFLICT (account_id) DO UPDATE SET
+         email = excluded.email, password_ciphertext = excluded.password_ciphertext,
+         password_iv = excluded.password_iv, sling_token = excluded.sling_token,
+         org_id = excluded.org_id, sling_token_updated_at = excluded.sling_token_updated_at,
+         updated_at = unixepoch()`,
+    )
+      .bind(accountId, link.email, link.ciphertext, link.iv, session.token, session.orgId)
+      .run();
+    return;
+  }
+  const row = await getRow(env, accountId);
+  if (!row) throw new SlingLoginError("Sling isn't linked");
   const password = await decryptPassword(env.RADIUS_CREDENTIAL_KEY, aad(row.email), row.password_ciphertext, row.password_iv);
   const session = await slingLogin(env, row.email, password);
   await saveToken(env, accountId, session.token, session.orgId);
-  return session.token;
+}
+
+const lockFor = (env: Env, accountId: number) => env.ACCOUNT_LOCK.getByName(String(accountId));
+
+type SignInState = { state: "pending" } | { state: "done" } | { state: "failed"; credentials: boolean; message: string };
+
+async function signInState(env: Env, instanceId: string): Promise<SignInState> {
+  const instance = await env.SLING_SIGN_IN.get(instanceId);
+  const { status, error } = await instance.status();
+  if (status === "complete") return { state: "done" };
+  if (status === "errored" || status === "terminated" || status === "unknown") {
+    return { state: "failed", credentials: error?.name === SLING_LOGIN_ERROR, message: error?.message ?? status };
+  }
+  return { state: "pending" };
+}
+
+/**
+ * Gets a new Sling token, sharing a sign-in with any other request doing the
+ * same. `since` is when the caller sent the request Sling turned down. Waits
+ * for the SlingSignIn Workflow, which usually takes 10–60 seconds.
+ */
+async function refreshToken(env: Env, accountId: number, since: number): Promise<string> {
+  const ticket = await lockFor(env, accountId).slingSignIn(accountId, { since });
+  if ("instanceId" in ticket) {
+    const deadline = Date.now() + 180_000;
+    for (;;) {
+      const result = await signInState(env, ticket.instanceId);
+      if (result.state === "done") break;
+      if (result.state === "failed") throw new Error(`Sling sign-in failed: ${result.message}`);
+      if (Date.now() > deadline) throw new Error("Timed out waiting for the Sling sign-in");
+      await new Promise((r) => setTimeout(r, 3000));
+    }
+  }
+  const row = await getRow(env, accountId);
+  if (!row?.sling_token) throw new Error("Sling sign-in finished without a token");
+  return row.sling_token;
 }
 
 // --------------------------------------------------------------- /api/sling
@@ -152,38 +216,52 @@ async function handleApi(request: Request, env: Env, pathname: string): Promise<
     return json({ linked: !!row, email: row?.email ?? null });
   }
 
-  // POST /api/sling — { email, password }
+  // POST /api/sling — { email, password }. Starts the sign-in in the
+  // SlingSignIn Workflow and returns 202 { signIn: instanceId } right away;
+  // the page polls GET /api/sling/sign-in/:id. The Workflow only ever sees
+  // the encrypted password.
   if (pathname === "/api/sling" && request.method === "POST") {
     const body = (await request.json().catch(() => null)) as { email?: unknown; password?: unknown } | null;
     const email = typeof body?.email === "string" ? body.email.trim().toLowerCase() : "";
     const password = typeof body?.password === "string" ? body.password : "";
     if (!email || !password) return json({ error: "Email and password are required." }, 400);
 
-    let session: SlingSession;
-    try {
-      session = await slingLogin(env, email, password);
-    } catch (err) {
-      if (err instanceof SlingLoginError) return json({ error: "Sling didn't accept that email and password." }, 401);
-      console.error("Sling login failed", err);
-      return json({ error: "Couldn't sign in to Sling. Try again in a moment." }, 502);
-    }
     const { ciphertext, iv } = await encryptPassword(env.RADIUS_CREDENTIAL_KEY, aad(email), password);
-    await env.DB.prepare(
-      `INSERT INTO sling_accounts (account_id, email, password_ciphertext, password_iv, sling_token, org_id, sling_token_updated_at)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, unixepoch())
-       ON CONFLICT (account_id) DO UPDATE SET
-         email = excluded.email, password_ciphertext = excluded.password_ciphertext,
-         password_iv = excluded.password_iv, sling_token = excluded.sling_token,
-         org_id = excluded.org_id, sling_token_updated_at = excluded.sling_token_updated_at,
-         updated_at = unixepoch()`,
-    )
-      .bind(account.id, email, ciphertext, iv, session.token, session.orgId)
-      .run();
-    return json({ linked: true, email });
+    const ticket = await lockFor(env, account.id).slingSignIn(account.id, { link: { email, ciphertext, iv } });
+    if (!("instanceId" in ticket)) throw new Error("Expected a new Sling sign-in");
+    return json({ signIn: ticket.instanceId }, 202);
   }
 
-  // DELETE /api/sling — unlink, deleting the stored password and token.
+  // GET /api/sling/sign-in/:id — { state: "pending" | "done" | "failed", email?, error? }
+  const signInId = pathname.match(/^\/api\/sling\/sign-in\/([^/]+)$/)?.[1];
+  if (signInId && request.method === "GET") {
+    // Instance IDs start with the account ID (see AccountLock), so an account
+    // can only see its own sign-ins.
+    if (!signInId.startsWith(`sling-${account.id}-`)) return json({ error: "Not found" }, 404);
+    let result: SignInState;
+    try {
+      result = await signInState(env, signInId);
+    } catch {
+      return json({ error: "Not found" }, 404);
+    }
+    if (result.state === "done") {
+      const row = await getRow(env, account.id);
+      return json({ state: "done", email: row?.email ?? null });
+    }
+    if (result.state === "failed") {
+      if (!result.credentials) console.error("Sling sign-in failed", result.message);
+      const error = result.credentials
+        ? "Sling didn't accept that email and password."
+        : "Couldn't sign in to Sling. Try again in a moment.";
+      return json({ state: "failed", error });
+    }
+    return json({ state: "pending" });
+  }
+
+  // DELETE /api/sling — unlink, deleting the stored password and token, and
+  // stopping a sign-in that's still running.
   if (pathname === "/api/sling" && request.method === "DELETE") {
+    await lockFor(env, account.id).cancelSlingSignIn();
     await env.DB.prepare("DELETE FROM sling_accounts WHERE account_id = ?").bind(account.id).run();
     return json({ ok: true });
   }
@@ -311,10 +389,11 @@ async function proxyApi(request: Request, env: Env, accountId: number, url: URL)
     return fetch(API_ORIGIN + path, { method: request.method, headers, body, redirect: "manual" });
   };
 
-  let token = row.sling_token ?? (await relogin(env, accountId, row));
+  const sentAt = Date.now();
+  let token = row.sling_token ?? (await refreshToken(env, accountId, sentAt));
   let upstream = await send(token);
   if (upstream.status === 401) {
-    token = await relogin(env, accountId, row);
+    token = await refreshToken(env, accountId, sentAt);
     upstream = await send(token);
   }
   // Sling can hand back a refreshed token.

@@ -442,8 +442,8 @@ record each one in `docs/ARCHITECTURE.md` once it's made.
 | Web app and `/api/*` | Worker with Static Assets (as today) | Already in place. |
 | Weekly run: read Radius and Sling, predict, generate, save the draft, notify | Workflow, started by a Cron Trigger | Each step is retried and its result saved, so a failure partway through resumes instead of starting over. A fixed instance ID per week (for example `weekly-2026-W48`) means a cron that fires twice can't run the week twice. |
 | Nightly Radius sync (visit history, appointment changes) | Workflow, one step per page of results | Each step writes its rows to D1 and passes on only where to continue, which keeps step results small. |
-| Sling sign-in (captcha wait of up to 2 minutes) | Workflow step | Steps have no wall-clock limit. The captcha solve and the login go in the same step, because a solved captcha expires quickly. Linking Sling from the UI starts the Workflow and the page polls for the result. Today the sign-in runs inside the web request and dies if the tab closes. |
-| One sign-in at a time per linked account | Durable Object per account, holding the lock and the current token | Two jobs that find an expired token at the same time share one sign-in instead of solving two captchas. It also records when a sign-in started, in case the object is restarted mid-sign-in. |
+| Sling sign-in (captcha wait of up to 2 minutes) | Workflow step | Steps have no wall-clock limit. The captcha solve and the login go in the same step, because a solved captcha expires quickly. Linking Sling from the UI starts the Workflow and the page polls for the result. Built 2026-11-23. |
+| One sign-in at a time per linked account | Durable Object per account, holding the lock | Two jobs that find an expired token at the same time share one sign-in instead of solving two captchas. It also records the running sign-in, in case the object is restarted mid-sign-in. Built 2026-11-23; the token stays in D1. |
 | Schedule generation | Pure TypeScript in a Workflow step, with a raised CPU limit | A step can use up to 5 minutes of CPU. |
 | Notifications to the director | Email through Cloudflare Email Service (`send_email` binding) | Still in beta and needs a sending domain. The fallback is a transactional email API (Resend, Postmark) called with `fetch`. |
 | Parent emails (booking assistant) | Cloudflare Email Routing, which passes each message to the Worker's `email` handler. The Worker starts a booking Workflow. | Email intake without a server. Needs a domain whose email runs through Cloudflare. The center's current address can forward booking emails to it. |
@@ -476,11 +476,10 @@ record each one in `docs/ARCHITECTURE.md` once it's made.
 - **Time zone**: Cron Triggers run on UTC, but the center runs on Pacific time with daylight saving.
   Fire hourly, check the local hour in code, and rely on the weekly instance ID to prevent duplicate
   runs.
-- **Types**: generate the `Env` type with `wrangler types` instead of writing it by hand, and check it
-  in CI. Watch for clashes with Bun's types; that's why `src/server/env.ts` imports the Workers types
-  as a module today.
-- **Environments**: add a staging environment with its own D1 database. Bindings aren't inherited
-  between environments, so each one is listed again.
+- **Types**: done, see `docs/ARCHITECTURE.md`. Still to do: run `bun run typecheck` in CI.
+- **Environments**: staging is set up in `wrangler.jsonc` (see `docs/ARCHITECTURE.md`), but its D1
+  database isn't created yet: `wrangler d1 create mathnasium-scheduling-staging`, then put its ID in
+  `wrangler.jsonc`.
 - **Deploys**: Workers Builds (Cloudflare's CI, which has Bun) runs the tests, applies D1 migrations,
   then deploys.
 - **Testing**: `bun test` for the pure scheduler and predictor. Add Cloudflare's Vitest integration
@@ -544,7 +543,7 @@ records let its accuracy be checked against past weeks right away.
 | Phase | Scope | Status |
 | --- | --- | --- |
 | 0. Foundations | Login with Radius, link Sling, embedded views, Cloudflare + D1 setup | Done |
-| 1. Read the data | Groundwork: generated types, staging environment, a Durable Object sign-in lock per account, Sling sign-in moved into a Workflow. Then read Radius appointments (with student levels, and whether each is online) and the ratio, and the Sling roster, locations, availability, time off and existing shifts. Show booked demand per time block in the app. | Planned |
+| 1. Read the data | Groundwork: generated types, staging environment, a Durable Object sign-in lock per account, Sling sign-in moved into a Workflow. Then read Radius appointments (with student levels, and whether each is online) and the ratio, and the Sling roster, locations, availability, time off and existing shifts. Show booked demand per time block in the app. | In progress: groundwork built 2026-11-23 (staging still needs its D1 database). Reading the data is next. |
 | 2. Setup | Center setup (hours, presence rules, school programs, the Remote location). Roster details: roles, levels, teaching limits, preferred programs, remote work, work-from-home days, hour preferences. | Planned |
 | 3. Generate drafts | Switch to Workers Paid for the scheduler's CPU time. Scheduler v1 (heuristic) with the coverage report. No publishing yet. | Planned |
 | 4. Review and edit | Calendar view of the draft, manual edits, locking, regenerate around locks. | Planned |

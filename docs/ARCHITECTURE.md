@@ -19,6 +19,9 @@ or built, record it here and update the plan to match.
 | **CapMonster solves Sling's login captcha.** | Sling's login API requires a reCAPTCHA token. |
 | **Radius and Sling are shown in the app through same-origin proxies.** | Both refuse to be shown in another site's iframe. Proxying also keeps their cookies and tokens on the server. |
 | **React built with Bun's own tooling**, no framework or separate bundler. | Fewer tools to maintain. |
+| **One Durable Object per account (`AccountLock`) runs one sign-in at a time.** | Requests that find an expired login together share one sign-in, instead of each signing in again (for Sling, each paying for a captcha). |
+| **Sling sign-in runs in a Workflow (`SlingSignIn`).** | It waits up to 2 minutes for the captcha. A Workflow step has no wall-clock limit and keeps going if the tab closes. |
+| **Runs on the Workers Free plan until the scheduler needs more CPU.** | Durable Objects and Workflows are on the Free plan. Its 10 ms of CPU and 50 outgoing requests per invocation fit sign-ins and proxying. |
 
 ## Overview
 
@@ -30,7 +33,10 @@ Browser ──> Worker (src/worker.ts)
               ├─ /sling/__api/* ── adds token ───> api.getsling.com
               └─ everything else ──> static assets (dist/, the React app)
 
-Sling sign-in also calls CapMonster (api.capmonster.cloud) to solve the captcha.
+Sign-ins go through the account's AccountLock (Durable Object, src/server/accountLock.ts):
+  Radius: signs in itself
+  Sling:  starts the SlingSignIn Workflow (src/server/slingSignIn.ts), which
+          calls CapMonster (api.capmonster.cloud) to solve the captcha
 ```
 
 Workers Static Assets serves the built app from `dist/`, with single-page-app fallback. Only
@@ -44,7 +50,8 @@ Workers Static Assets serves the built app from `dist/`, with single-page-app fa
 | `DELETE /api/auth/radius` | `src/server/auth.ts` | Unlink Radius: deletes the account, its stored password and cookies, all its sessions and its Sling link. |
 | `GET /api/auth/me` | `src/server/auth.ts` | The signed-in account, or 401. |
 | `POST /api/auth/logout` | `src/server/auth.ts` | Ends this browser's session. Radius stays linked. |
-| `GET`, `POST`, `DELETE /api/sling` | `src/server/sling.ts` | Whether Sling is linked; link Sling; unlink Sling. |
+| `GET`, `POST`, `DELETE /api/sling` | `src/server/sling.ts` | Whether Sling is linked; start linking Sling (202 with the sign-in's ID); unlink Sling, stopping a sign-in that's still running. |
+| `GET /api/sling/sign-in/:id` | `src/server/sling.ts` | Whether a Sling sign-in is pending, done or failed. Only the account's own sign-ins. |
 | `/radius/*` | `src/server/radiusProxy.ts` | Radius pages and requests, made as the signed-in account. |
 | `/sling/*` | `src/server/sling.ts` | Sling's web app files. |
 | `/sling/__api/*` | `src/server/sling.ts` | Sling's API, with the stored token added. |
@@ -68,27 +75,43 @@ Any other `/api/*` path returns 404 as JSON.
    sessions are deleted at each login.
 
 **Acting as the account in Radius**: `radiusFetch()` sends a request with the stored cookies. If
-Radius answers with a 401 or a redirect to its login page, it decrypts the password, signs in again,
-retries once and saves the new cookies. It doesn't follow redirects, and the request body must be
-replayable (not a stream), because it may be sent twice. All Radius access goes through it.
+Radius answers with a 401 or a redirect to its login page, it asks the account's `AccountLock` for
+new cookies and retries once. It doesn't follow redirects, and the request body must be replayable
+(not a stream), because it may be sent twice. All Radius access goes through it.
+
+**Sign-in lock** (`src/server/accountLock.ts`): one Durable Object per app account, named by the
+account ID, runs its calls one at a time. A caller passes the time it sent the request that was
+turned down. If a sign-in finished after that, the caller gets that result instead of starting
+another. A Radius sign-in decrypts the password, signs in and saves the cookies in the object
+itself. For Sling, see below.
 
 ## Sling link
 
 `src/server/sling.ts`:
 
-1. The director enters their Sling email and password (`POST /api/sling`).
-2. The Worker asks CapMonster to solve Sling's reCAPTCHA v2 (task type `RecaptchaV2Task`, with the
-   site key from Sling's login page). It checks every 3 seconds, for up to 2 minutes. A solve usually
-   takes 10–60 seconds.
+1. The director enters their Sling email and password (`POST /api/sling`). The Worker encrypts the
+   password and asks the account's `AccountLock` to start a sign-in with it. The lock stops any
+   sign-in still running with older credentials and starts a `SlingSignIn` Workflow instance, named
+   `sling-<account ID>-<time>`. The Worker answers 202 with the instance ID, and the page checks
+   `GET /api/sling/sign-in/:id` every 3 seconds.
+2. The Workflow's one step decrypts the password and asks CapMonster to solve Sling's reCAPTCHA v2
+   (task type `RecaptchaV2Task`, with the site key from Sling's login page). It checks every 5
+   seconds, for up to 2 minutes. A solve usually takes 10–60 seconds.
 3. It posts the email, password and captcha answer to `api.getsling.com/v1/account/login`. Sling
    returns its token in the `Authorization` response header, along with the organization ID. A 401 or
-   409 means wrong credentials, unless the message mentions the captcha.
+   409 means wrong credentials, unless the message mentions the captcha. Wrong credentials fail the
+   instance at once (a `NonRetryableError` named `SlingLoginError`). Anything else is retried once,
+   since each attempt pays for a captcha.
 4. It saves the token, organization ID and encrypted password in `sling_accounts`, one Sling link per
-   app account.
+   app account. The step returns only the time it finished, so the Workflow's saved state holds no
+   token and no plain password.
 
 **Using the token**: requests to `/sling/__api/*` get the stored token added. If Sling answers 401,
-the Worker signs in again (a new captcha) and retries once. If Sling sends back a refreshed token, it
-is saved.
+the Worker asks the `AccountLock` to sign in again with the stored login. The lock reuses a running
+`SlingSignIn` instance, or one that finished after the turned-down request, and otherwise starts one.
+The request waits for it (up to 3 minutes) and retries once. If Sling sends back a refreshed token,
+it is saved. The lock keeps its latest instance ID in its storage, so it still knows about a running
+sign-in after a restart.
 
 Sling sits behind Cloudflare's bot protection, which rejects requests without a browser-like
 `User-Agent`, so the Worker sends one.
@@ -157,10 +180,22 @@ Deleting an account deletes its sessions and Sling link (foreign keys with `ON D
 | `RADIUS_CREDENTIAL_KEY` | Encrypting the stored Radius and Sling passwords. Generate with `openssl rand -base64 32`. |
 | `CAPMONSTER_API_KEY` | Solving Sling's login captcha. |
 
-Set them with `wrangler secret put` in production, and in `.dev.vars` for local development.
+Set them with `wrangler secret put` (add `--env staging` for staging) in production, and in
+`.dev.vars` for local development. They're listed under `secrets.required` in `wrangler.jsonc`, so a
+deploy fails if one is missing.
 
-The `Env` type is written by hand in `src/server/env.ts`. It imports the Workers types as a module,
-not as globals, so they don't clash with Bun's `Request` and `Response` types.
+**Generated types**: `bun run types` writes `worker-configuration.d.ts` from `wrangler.jsonc`
+(`wrangler types --include-runtime=false`). It's checked in, and `bun run typecheck` fails if it's
+out of date. `src/server/env.ts` re-exports it as `Env`. The runtime types are left out because
+they would clash with Bun's global `Request` and `Response`. Instead, `src/server/cloudflare.d.ts`
+aliases the binding types the generated file names (`D1Database`, `DurableObjectNamespace`,
+`Workflow`, `Fetcher`) from the package's module-style types, and declares the `cloudflare:workers`
+and `cloudflare:workflows` modules.
+
+**Environments**: the top level of `wrangler.jsonc` is production. `env.staging` deploys a separate
+Worker, `mathnasium-scheduling-staging`, with its own D1 database and its own Workflow name
+(Workflow names are unique per Cloudflare account). Bindings aren't inherited, so staging repeats
+them.
 
 ## Build and development
 
@@ -175,10 +210,10 @@ not as globals, so they don't clash with Bun's `Request` and `Response` types.
 
 ## Known limitations
 
-- **Sling sign-in runs inside the web request.** It takes up to a minute or two, and fails if the tab
-  closes.
-- **No sign-in lock.** Two requests that find an expired login at the same time both sign in again.
-  For Sling, that's two paid captcha solves.
+- **A refreshed Sling token still makes one request wait.** The sign-in runs in the background, but
+  the proxy request that found the token expired waits for it.
+- **Leaving the page while linking Sling** doesn't stop the sign-in, but the page won't show the
+  result until it's reloaded.
 - **Unofficial endpoints.** Neither Radius nor Sling has a public API for this. The app uses the
   endpoints their own sites use, which can change without notice.
 - **No live updates** in the embedded views (see above).
