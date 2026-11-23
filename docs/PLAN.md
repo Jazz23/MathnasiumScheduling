@@ -466,8 +466,12 @@ record each one in `docs/ARCHITECTURE.md` once it's made.
 
 **Practices:**
 
-- **Plan**: Workers Paid ($5/month) is required. The Free plan allows 10 ms of CPU and 50 outgoing
-  requests per invocation, which is too little. One center should stay within Paid's included usage.
+- **Plan**: Workers Paid ($5/month) is needed from phase 3. The Free plan already includes Durable
+  Objects and Workflows, so phases 1 and 2 can run on it. Its limits are 10 ms of CPU per request or
+  Workflow step (waiting on the network doesn't count) and 50 outgoing requests per invocation. Big
+  reads, like the first import of visit history, are split into Workflow steps so each step stays
+  within those limits. The scheduler needs more CPU than that. One center should stay within Paid's
+  included usage.
   Other costs: CapMonster for each Sling sign-in, and a domain for sending email.
 - **Time zone**: Cron Triggers run on UTC, but the center runs on Pacific time with daylight saving.
   Fire hourly, check the local hour in code, and rely on the weekly instance ID to prevent duplicate
@@ -540,9 +544,9 @@ records let its accuracy be checked against past weeks right away.
 | Phase | Scope | Status |
 | --- | --- | --- |
 | 0. Foundations | Login with Radius, link Sling, embedded views, Cloudflare + D1 setup | Done |
-| 1. Read the data | Groundwork: Workers Paid, generated types, staging environment, a Durable Object sign-in lock per account, Sling sign-in moved into a Workflow. Then read Radius appointments (with student levels, and whether each is online) and the ratio, and the Sling roster, locations, availability, time off and existing shifts. Show booked demand per time block in the app. | Planned |
+| 1. Read the data | Groundwork: generated types, staging environment, a Durable Object sign-in lock per account, Sling sign-in moved into a Workflow. Then read Radius appointments (with student levels, and whether each is online) and the ratio, and the Sling roster, locations, availability, time off and existing shifts. Show booked demand per time block in the app. | Planned |
 | 2. Setup | Center setup (hours, presence rules, school programs, the Remote location). Roster details: roles, levels, teaching limits, preferred programs, remote work, work-from-home days, hour preferences. | Planned |
-| 3. Generate drafts | Scheduler v1 (heuristic) with the coverage report. No publishing yet. | Planned |
+| 3. Generate drafts | Switch to Workers Paid for the scheduler's CPU time. Scheduler v1 (heuristic) with the coverage report. No publishing yet. | Planned |
 | 4. Review and edit | Calendar view of the draft, manual edits, locking, regenerate around locks. | Planned |
 | 5. Publish | Create, update and remove the app's shifts in Sling. | Planned |
 | 6. Predict attendance | Read students' sign-in/out history, learn unbooked students' patterns, show booked vs. predicted demand, director overrides, accuracy checks against past weeks. | Planned |
