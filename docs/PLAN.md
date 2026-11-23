@@ -1,8 +1,9 @@
 # Project Plan
 
 > Started 2026-11-23. This is a living document: the plan for what the app will do and in what order.
-> Only "What exists today" is built. Once a design decision is made, record it (and why) in
-> `docs/ARCHITECTURE.md`, and update this plan to match.
+> Only "What exists today" is built. How it works, and the decisions made so far, are in
+> `docs/ARCHITECTURE.md`. Everything else here is still a proposal: once one is decided or built,
+> record it (and why) there, and update this plan to match.
 
 ## Goal
 
@@ -69,16 +70,9 @@ text.
 
 ## What exists today
 
-- **Login with Radius**: app accounts are Radius accounts. The Worker signs in to Radius on the
-  user's behalf, keeps the session cookies and the AES-GCM encrypted password, and signs in again
-  when the session expires (`src/server/auth.ts`, `src/server/radius.ts`).
-- **Link Sling**: the Worker signs in to Sling, solving its login reCAPTCHA through CapMonster, keeps
-  the encrypted password and Sling's token, and signs in again when the token expires
-  (`src/server/sling.ts`).
-- **Embedded views**: the Radius calendar and the Sling web app are shown in the app through
-  same-origin proxies (`/radius/*`, `/sling/*`).
-- **Infrastructure**: Cloudflare Worker serving the React app and `/api/*`, a D1 database with
-  migrations, and a Bun dev server with hot reload (`dev.ts`).
+Login with Radius, linking Sling, the Radius and Sling views embedded in the app, and the Cloudflare
+Worker with D1. `docs/ARCHITECTURE.md` describes how they work, along with the decisions made so
+far.
 
 This gives the Worker signed-in access to both Radius and Sling, which every feature below builds on.
 
