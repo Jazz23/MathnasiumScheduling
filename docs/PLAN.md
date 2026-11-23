@@ -51,8 +51,9 @@ text.
   remote shift doesn't count toward who's at the center.
 - **Visit**: one student's actual time at the center, from sign-in to sign-out, as recorded in Radius.
 - **Unbooked visit**: a visit with no matching appointment.
-- **Level**: how advanced a student's math is (for example elementary, middle school, high school and
-  up). Each instructor can teach up to some level.
+- **Level**: how advanced a student's math is. Radius groups grades into levels in each center's
+  settings. This center has Great Foundations (Pre K–K), Elementary (1–6), Middle (7–8) and High
+  (9–12). Each instructor can teach up to some level.
 - **School program**: teaching done off-site at a school (currently Valencia and Rio del Mar), staffed
   by the same employees.
 - **Supervisor**: the owner or an assistant center director. One of them must be at the center
@@ -97,7 +98,21 @@ The director configures the rules the scheduler uses:
   work, the school programs and the center's roles.
 
 The student-to-instructor ratio isn't entered here: the app reads it from Radius, where the center
-already sets it.
+already sets it. Radius' Center Settings has an in-center ratio and an online ratio for each level.
+This center's are:
+
+| Level | Grades | In-center | Online |
+| --- | --- | --- | --- |
+| Great Foundations | Pre K, K | 1:1 | 1:1 |
+| Elementary | 1–6 | 4:1 | 3:1 |
+| Middle | 7–8 | 4:1 | 3:1 |
+| High | 9–12 | 3:1 | 2:1 |
+
+Radius also has its own booking capacity (Scheduling → Default capacity): groups of days and hours,
+each with a number of instructors (for example Monday and Wednesday, 1–6 PM, 3 instructors).
+Radius multiplies that by the ratio to decide how many seats parents can book, so 3 instructors at
+4:1 gives 12 seats. This is the center's guess at staffing, not the Sling schedule. If the app's
+schedule staffs a time differently, the director may want this capacity updated to match.
 
 ### 2. Employee roster
 
@@ -138,11 +153,16 @@ with them.
 
 **At the center** (from Radius):
 
-- Read the appointments for the planning horizon from Radius. The Radius calendar loads its data from
-  `/Scheduling/CalendarData`, which the Worker can already call through `radiusFetch()`.
+- Read the appointments for the planning horizon from Radius. Appointment Management's data request
+  returns any date range at once, with each appointment's grade, session type, delivery method,
+  status and length. The calendar's `/Scheduling/CalendarData` returns one day. See "Radius
+  endpoints found so far".
 - Count in-center students in each time block by level, and convert that to instructors needed at
   each level using the ratio from Radius. For example, four high school students need enough
-  instructors who can teach high school, not just enough instructors.
+  instructors who can teach high school, not just enough instructors. Each appointment carries the
+  student's grade, which maps to a level through the center's grade ranges.
+- Most appointments are 60 minutes, some 90, and they start on any 15 minutes (Radius' calendar
+  counts seats in 15-minute slots).
 - Account for appointments that need specific skills (assessments, test prep).
 - Add the students predicted to come without an appointment (feature 5). Most students book, so
   booked appointments are most of the demand and the prediction fills in the rest.
@@ -151,7 +171,9 @@ with them.
 
 **Online** (from Radius): online appointments are counted the same way, by level, but separately.
 They don't need anyone at the center: an instructor at the center can take them, or someone on a
-remote shift. How Radius marks an appointment as online is still to be found (open question 21).
+remote shift. Each appointment has a delivery method ("In-Center" or "Online"), and online students
+use the online ratio, which is lower. Online appointments are rare today: 13 of about 3,400 between
+June and November 2026.
 
 **School programs** (off-site): each program's days, times and instructors needed come from center
 setup. This demand is fixed, not predicted.
@@ -164,13 +186,14 @@ in and out. This corrects booked demand rather than replacing it, so the schedul
 prediction exists.
 
 - **History**: Radius' Student Attendance Report (`/StudentAttendanceMonthlyReport`) has one row per
-  visit: student, date, arrival time, departure time and total hours, for any date range. The app
-  reads the data behind that report, imports past visits once, then keeps them up to date daily.
-  Mathnasium has required centers to record attendance in Radius since 2019, so years of history
-  should be there. If the report's data request turns out to be awkward to call, the report's Excel
-  export is a fallback. See "Radius endpoints found so far".
-- **Find unbooked visits**: match visits to appointments. A visit with no appointment is an unbooked
-  visit. An appointment with no visit is a no-show.
+  visit: student, date, arrival time, departure time, length and delivery (in-center or @home), for
+  any date range. Visits don't record the instructor. The app reads the data behind that report,
+  imports past visits once, then keeps them up to date daily. This center's history starts on
+  2023-01-03: about 16,400 visits so far, roughly 4,700 a year. See "Radius endpoints found so far".
+- **Find unbooked visits**: Radius seems to mark them already. Appointment Management lists entries
+  with the status "Drop-In", with no pod assigned, which look like check-ins without a booking.
+  Confirm this with the director. Other statuses are Scheduled, Attended, Cancelled, Late cancelled
+  and No show, so no-shows are marked too. Matching visits to appointments is the fallback.
 - **Learn each student's pattern**: for each weekday, how likely the student is to come, when they
   usually arrive and how long they stay. Recent weeks count more than old ones, so a student who stops
   coming fades out instead of being predicted forever.
@@ -186,9 +209,9 @@ prediction exists.
   and show the difference, so the director knows how much to trust the predictions.
 - **Booked appointments, too**: the same history shows which students often miss appointments, or
   stay longer or shorter than booked. Predictions can adjust for that.
-- **Sessions left this month**: Radius tracks how many sessions each student has left in the month.
-  A student with many left near the end of the month is more likely to come; one with none left is
-  unlikely to.
+- **Sessions left this month**: Radius tracks how many sessions each student has left in the month
+  (the check-in screen's "Remaining Sessions"). A student with many left near the end of the month is
+  more likely to come; one with none left is unlikely to.
 
 **Approach:** start with simple per-student weekday frequencies, weighted toward recent weeks. Only
 try something more complex if the accuracy checks show it's needed.
@@ -476,22 +499,36 @@ record each one in `docs/ARCHITECTURE.md` once it's made.
 
 ### Radius endpoints found so far
 
-Radius has no public API. These pages were found in Radius' own public scripts and in public GitHub
+Radius has no public API. These were first found in Radius' own public scripts and in public GitHub
 projects that automate Radius (PhiPrime/mnco, labozo123321/mathnasium,
-NeemaJ/MathnasiumCalendarExpander). Confirm each one while signed in, and capture the exact requests
-in the browser's network tab, before building on it.
+NeemaJ/MathnasiumCalendarExpander). The ones marked confirmed were called while signed in on
+2026-11-23, with the requests captured from Radius' own pages.
+
+**How Radius' data requests work:**
+
+- Grids use Kendo UI. A grid's data request is a form POST with `sort`, `page`, `pageSize`, `group`
+  and `filter`, plus the page's own filters, and returns `{ Data: [...], Total }`.
+- Every POST needs the anti-forgery token in the body (`__RequestVerificationToken`, from a hidden
+  input on any Radius page), along with the cookie of the same name. Without it Radius answers with a
+  generic 500 error page. GETs don't need it.
+- Requests name the center (`centerId`, this center is 3600), so there's no center to select first.
+- Dates come back as `/Date(ms)/`, alongside ready-made strings such as `11/20/2026` and `12:15 PM`.
+- Radius blocks clients that send many requests quickly: after about 30 requests in a few minutes,
+  some pages answered with 403 for a while. Space requests out, and page through large ranges
+  instead of firing them in parallel.
 
 | Path | What it has | Use |
 | --- | --- | --- |
-| `/Scheduling/CalendarData` | Appointments behind the scheduling calendar: student name, start, end, resource. | Booked demand (feature 4). |
-| `/StudentAttendanceMonthlyReport` | Student Attendance Report: one row per visit (account ID, name, date, arrival, departure, total hours) for a date range. Excel export. Also a month-by-month summary view. | Visit history (feature 5). The JSON request behind the grid is still to be captured. It's probably a POST with the anti-forgery token, like Radius' other reports. |
-| `/Attendance/StudentAttendances_Read?centerId=` | JSON with each student's current check-in state and last visit. Not history. Probably also sessions remaining (a `PrimaryCount` field). | Sessions left this month, for the booking assistant and prediction. Maybe a live "who's here now" view. |
+| `POST /AppointmentManagement/GetAppointments` (confirmed) | Appointments for a date range (`startDate`, `endDate` as `yyyy-MM-dd`; filters `deliveryMethod` = `online` or `in_center`, `sessionTypes`, `gradeRanges`, `sessionStatuses`). Each has student ID, date, time, `SessionDuration` in minutes, `SessionType` (Standard, HighSchool, Great Foundations, Private, or the membership name), `SessionStatus` (Scheduled, Attended, Drop-In, Cancelled, Late cancelled, No show), `DeliveryMethod` ("In-Center" or "Online"), `Grade` ("Pre K", "K", "1"–"12", "College") and `PodLabel`. | Booked demand (feature 4), unbooked visits and no-shows (feature 5). |
+| `GET /Scheduling/CalendarData?centerKey=3600\|False\|False&date=yyyy-MM-dd` (confirmed) | One day of the scheduling calendar. `CalendarItems`: each appointment's start and end time, `SessionType`, `DeliveryType` (`in_center`), status and pod. `Seats`: for each 15-minute slot, seats booked in-center and online and seats still free. Also the day's opening hours and the maximum physical and online seats. | Booked demand for one day. Radius' free seats for the booking assistant. |
+| `/Membership/CenterSettings/{centerId}` (confirmed, a page) | The center's levels, embedded in the page as JSON (`radius.utilities.levels`): name, first and last grade (Pre K = 13, K = 14), `InCenterRatio`, `OnlineRatio` and `SessionTypeId`. | The ratio and the grade-to-level mapping (features 1 and 4). |
+| `GET /CenterAvailability/GetDefaultCapacity?centerId=&isVirtual=false` (confirmed) | Radius' booking capacity: maximum physical and online seats, and groups of days and hours with a number of instructors per session type. | Comparing Radius' capacity with the schedule (feature 1). |
+| `POST /StudentAttendanceReport/StudentAttendanceReport_Read` (confirmed) | The Student Attendance Report's visits: one row per visit with student ID, enrollment ID, date, arrival, departure, `DurationInMinutes`, `Delivery` ("In-Center" or "Hybrid") and `DeliveryText` ("In-Center" or "@home"), membership type, `SessionsPerMonth` and `SessionsRemaining`. Body: `start` and `end` as `MM/dd/yyyy 12:00:00 AM`, `centerId`, `schoolPartnership=2` (all), and empty `membershipTypeList`, `selectStudent`, `delivery` and `ctrIds`. No instructor. | Visit history (feature 5). |
+| `POST /StudentAttendanceMonthlyReport/StudentAttendanceMonthlyReport_Read` | The same report's month-by-month summary per student. Same parameters, not called yet. | Not needed yet. |
+| `GET /Attendance/StudentAttendances_Read?centerId=` (confirmed) | Every active student: check-in state, last visit, main enrollment (`PrimaryTypeName` such as Monthly Sessions, After School Program or Sessions Package) with `PrimaryCount` = sessions remaining, and any private package with `PrivateCount`. Enrollment type 1 has no count. | Sessions left this month, for the booking assistant and prediction. Maybe a live "who's here now" view. |
 | `/Attendance/Roster` | A day's roster with check-in flags. Probably where staff fix arrival and departure times. | Not needed yet. |
 | `/EmployeeAttendance/InstructorTimeSheet` | Instructor hours. | Not needed yet. Could later compare scheduled vs. actual hours. |
-| Not found yet | Creating an appointment. | Booking assistant (feature 11). Capture the request the calendar makes when staff add an appointment. |
-
-Radius' report pages may only cover the centers selected in the signed-in session, so the app may
-need to select the center first.
+| `/Scheduling/PlanSchedule`, `/Scheduling/Schedule` (not called) | The calendar's booking requests: plan a booking, then make it. | Booking assistant (feature 11). Capture them when staff book an appointment. |
 
 ## Roadmap
 
@@ -544,16 +581,21 @@ records let its accuracy be checked against past weeks right away.
 
 ## Open questions
 
-1. Where in Radius is the student-to-instructor ratio set, and does it vary by level or appointment
-   type?
+1. ~~Where in Radius is the student-to-instructor ratio set, and does it vary by level or appointment
+   type?~~ Answered 2026-11-23: in Center Settings, per level, with separate in-center and online
+   ratios (feature 1).
 2. Does Sling store weekly hour limits or preferences for employees, or does the director enter them
    in the app?
-3. How long are appointments, and what time block size should the scheduler use?
+3. How long are appointments, and what time block size should the scheduler use? Partly answered
+   2026-11-23: most are 60 minutes and some 90, starting on any 15 minutes. Radius counts seats in
+   15-minute slots. The block size is still to decide.
 4. One center, or several (each with its own settings, roster and accounts)?
 5. How far ahead is the schedule made, and when do employees need to see it?
-6. Visit history: what request does the Student Attendance Report make for its data, and how far back
-   does this center's history go? Does a visit record the instructor? Can a walk-in be told apart
-   from a booked visit other than by matching visits to appointments?
+6. ~~Visit history: what request does the Student Attendance Report make for its data, and how far
+   back does this center's history go? Does a visit record the instructor? Can a walk-in be told
+   apart from a booked visit other than by matching visits to appointments?~~ Answered 2026-11-23:
+   see "Radius endpoints found so far". History starts 2023-01-03. Visits don't record the
+   instructor. Walk-ins seem to appear as "Drop-In" appointments; confirm with the director.
 7. Should the app publish shifts straight to employees, or leave them unpublished in Sling for a final
    check there?
 8. How should the app notify the director: email (needs a domain to send from), or something else?
@@ -564,10 +606,10 @@ records let its accuracy be checked against past weeks right away.
 12. How much teaching does Carol want: a number of hours per day, a share of her time, or particular
     times of day?
 13. Does Carol's time go into Sling like everyone else's, or does the app only plan around it?
-14. Radius records each student's grade (Pre K, K, 1–12, College). Do appointments carry it, or does
-    the app look it up through the student? Is grade the right measure, or the level of math the
-    student is working on? Which levels matter for staffing (elementary, middle school, high school
-    and up, test prep)? Can Keiko teach middle school?
+14. Partly answered 2026-11-23: appointments carry the student's grade, and Radius groups grades
+    into the center's levels (Great Foundations, Elementary, Middle, High), each with its own ratio.
+    Still open: is grade the right measure, or the level of math the student is working on? Does
+    test prep need its own level? Can Keiko teach middle school?
 15. For the Valencia and Rio del Mar programs: which days and times, how many instructors, are they in
     Radius or Sling already, and how long is the drive from the center?
 16. Are breaks paid or unpaid, and should the scheduler aim for a third person whenever someone is
@@ -580,8 +622,9 @@ records let its accuracy be checked against past weeks right away.
     appointment length?
 20. If the earliest time in a parent's window would need an extra instructor but a later time has
     room, should the bot offer the later time, or ask the director first?
-21. How does Radius mark an online appointment: a field on the appointment, a separate resource, or
-    something else? Is the ratio the same for online students?
+21. ~~How does Radius mark an online appointment: a field on the appointment, a separate resource,
+    or something else? Is the ratio the same for online students?~~ Answered 2026-11-23: a delivery
+    method field on the appointment. Online students have their own, lower ratio.
 22. Can an instructor at the center teach online students alongside in-center ones, within the same
     ratio, or do online students need their own instructor?
 23. Besides Carol, who can work from home? Does the center use Sling's time clock with geofencing?
