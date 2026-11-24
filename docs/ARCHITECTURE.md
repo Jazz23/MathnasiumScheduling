@@ -11,9 +11,12 @@ or built, record it here and update the plan to match.
 | Decision | Why |
 | --- | --- |
 | **Fully serverless on Cloudflare**: a Worker serves the app and API, and D1 stores the data. | No server to maintain. |
-| **Only the director uses the app.** Employees keep using Sling, and parents never use the app. | Employees already enter availability in Sling and see their shifts there. One user keeps the app simple. |
-| **Radius and Sling stay the sources of truth.** Appointments, the student-to-instructor ratio, attendance history and sessions left this month come from Radius. Availability, time off and the published schedule come from Sling. The app stores only what neither one has. | No second copy of data to keep in sync, and the center keeps working the way it does today. |
+| **Only the director uses the app.** Employees keep using Sling, and parents never use the app. | Employees already request time off in Sling and see their shifts there. One user keeps the app simple. |
+| **One center.** Settings, roster and linked accounts aren't split by center. | The app is for this center only (decided 2026-11-24). |
+| **Radius and Sling stay the sources of truth.** Appointments, the student-to-instructor ratio, attendance history and sessions left this month come from Radius. Time off and the published schedule come from Sling. The app stores only what neither one has. | No second copy of data to keep in sync, and the center keeps working the way it does today. |
+| **Employee availability is entered in the app**, by the director (decided 2026-11-24). | Availability is a Sling Premium feature, and the center is on the free plan, so Sling has none to read. |
 | **The app only changes Sling shifts it created itself.** | Shifts the director makes by hand in Sling are never overwritten. |
+| **The app's shifts go into Sling unpublished**; the director publishes them there (decided 2026-11-24). | A last check in Sling before employees are notified. |
 | **App accounts are Radius accounts** ("Login with Radius"). | Radius has no OAuth, so there's nothing to sign in with except a Radius username and password. Everyone who would use the app already has one, so there's no separate password to manage. |
 | **The app stores Radius and Sling passwords, encrypted.** | Radius has no refresh tokens, and Sling's token expires. To keep working without asking the director to log in again, the Worker signs in again itself. |
 | **CapMonster solves Sling's login captcha.** | Sling's login API requires a reCAPTCHA token. |

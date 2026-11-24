@@ -15,10 +15,11 @@ The schedule is driven by two inputs:
   Radius, plus the students who come without booking, predicted from their sign-in history. Demand
   decides how many instructors are needed in each part of the day, and whether they have to be at the
   center or can work from home.
-- **Supply**: when each employee can work, from their availability and their time off in Sling, plus the
-  hours and preferences the director records for them.
+- **Supply**: when each employee can work, from the availability the director enters in the app and
+  their time off in Sling, plus the hours and preferences the director records for them.
 
-The app generates a draft. The director reviews it, adjusts it if needed, and publishes it to Sling.
+The app generates a draft. The director reviews it, adjusts it if needed, and sends it to Sling,
+where it stays unpublished until the director publishes it there.
 
 As a stretch goal, a booking assistant answers parents' appointment requests by email and text: it
 checks the schedule, books a time if there's room, and replies.
@@ -32,7 +33,10 @@ jobs, Durable Objects to coordinate sign-ins, and D1 for storage. There is no se
 connect Radius and Sling, set the center's scheduling rules, and review and publish schedules.
 
 **Employees never use the app.** They request time off in Sling, as they do today, and
-see their published shifts there.
+see their published shifts there. The director enters their availability in the app.
+
+**One center.** The app serves this one center, so settings, roster and linked accounts aren't
+split by center (answered 2026-11-24).
 
 **Parents** don't use the app either. The booking assistant (feature 11) talks to them by email and
 text.
@@ -41,10 +45,13 @@ text.
 
 - **Radius**: Mathnasium's center management system (radius.mathnasium.com). Source of truth for
   student appointments and the student-to-instructor ratio. The app reads from it. Only the booking
-  assistant (feature 11) writes to it, to book appointments.
+  assistant (feature 11) writes to it, to book appointments. The school programs aren't in Radius.
 - **Sling**: the shift-scheduling app the center uses (getsling.com). Source of truth for employee
-  availability (on Sling Premium only, see open question 25), time off and the published schedule. This app reads from it and writes shifts to it.
-- **Appointment**: a student's booked session in Radius.
+  time off and the published schedule. This app reads from it and writes shifts to it. Availability
+  is a Premium feature this center doesn't have, so it's entered in the app instead (feature 3).
+- **Appointment**: a student's booked session in Radius. Usually 60 minutes for elementary and
+  middle school students and 90 minutes for high school, and usually the same length every time for
+  a given student.
 - **Online appointment**: an appointment taught over video (Mathnasium@home). The student is at home.
   The instructor can be at the center or working from home.
 - **Remote shift**: a shift worked from home, for example to teach online appointments. Someone on a
@@ -55,17 +62,18 @@ text.
   settings. This center has Great Foundations (Pre K–K), Elementary (1–6), Middle (7–8) and High
   (9–12). Each instructor can teach up to some level.
 - **School program**: teaching done off-site at a school (currently Valencia and Rio del Mar), staffed
-  by the same employees.
+  by the same employees. Not in Radius; set up in the app.
 - **Supervisor**: the owner or an assistant center director. One of them must be at the center
   whenever it's open.
 - **Teaching time vs. on-site time**: an employee can be at the center without teaching, for example
   doing admin work. Only teaching time counts toward instructor coverage.
-- **Time block**: the unit the scheduler plans in (for example 30 minutes).
+- **Time block**: the unit the scheduler plans in. Proposed: 15 minutes, the same as Radius'
+  calendar slots, since appointments start on any 15 minutes.
 - **Coverage**: instructors needed vs. instructors scheduled in a time block.
 - **Shift**: one continuous stretch of work for one employee in one place (the center, a school
   program, or remote), as published to Sling.
 - **Draft**: a generated schedule that hasn't been published to Sling yet.
-- **Break**: a 10-minute break during a shift of 4 hours or more.
+- **Break**: a paid 10-minute break during a shift of 4 hours or more.
 - **Booking assistant**: the bot that answers parents' appointment requests by email and text
   (feature 11).
 
@@ -85,15 +93,19 @@ The director configures the rules the scheduler uses:
 
 - Operating hours for each day of the week.
 - Presence rules: who must be at the center whenever it's open, for example "at least two
-  employees, one of them a supervisor". Someone counts as present whether they're teaching or doing
-  other work, but not while on a break, and not while working remotely.
+  employees, one of them a supervisor". Someone counts as present whether they're teaching, doing
+  other work or on a break, but not while working remotely. (The director confirmed 2026-11-24 that
+  two people on, one of them on a break, is fine.)
 - Locations: the center, remote work, and each school program with its days, times and number of
-  instructors needed. Also the travel time between locations, and a travel allowance for anyone who
-  works from home and at the center on the same day.
+  instructors needed (Valencia needs 2, Rio del Mar 3). The programs aren't in Radius, so they're only
+  set up here. Also the travel time between locations, and a travel allowance for anyone who works
+  from home and at the center on the same day.
 - Shift rules: minimum and maximum shift length, maximum shifts per day, and time before the first
   appointment and after the last one for setup and cleanup.
-- Break rule: for example, a 10-minute break for anyone working 4 hours or more.
-- Planning horizon and cadence (for example: generate next week's schedule every Thursday).
+- Break rule: a paid 10-minute break for anyone working 4 hours or more.
+- Planning horizon and cadence. Employees should have their schedule at least 3 days before it
+  starts. With weeks starting Monday (Sling's setting), the week is in Sling by Friday, so the draft
+  is generated earlier, for example Wednesday, to leave time for review.
 - How Radius and Sling line up: which Sling location and positions correspond to the center, remote
   work, the school programs and the center's roles.
 
@@ -117,31 +129,33 @@ schedule staffs a time differently, the director may want this capacity updated 
 ### 2. Employee roster
 
 - Import employees from Sling (people, positions, locations) and keep the list in sync.
+- Any employee can be scheduled, whatever their role (answered 2026-11-24).
 - The director records what Sling doesn't have:
   - Role: owner, assistant center director, instructor, front desk. Presence rules use roles
     (for example "a supervisor on site").
   - Highest level they can teach (for example "up to middle school"), and other qualifications
-    (SAT/ACT prep, can run assessments).
-  - Teaching limit, for people with other duties: how much of their time on site should be teaching
-    (for example "not the whole day"). The rest is on-site time for other work.
+    (SAT/ACT prep, can run assessments). Levels follow the student's grade (answered 2026-11-24).
+  - Teaching limit, for people with other duties: the largest share of their time on site that
+    should be teaching (for example Carol: 50% at most). The rest is on-site time for other work.
   - Preferred programs: employees who should be first choice for a school program.
-  - Remote work: whether they can work from home, for example to teach online appointments.
+  - Remote work: whether they can work from home, for example to teach online appointments. Today
+    everyone can, so this defaults to yes.
   - Priority or seniority, used to break ties.
 
 ### 3. Employee availability and preferences
 
-**From Sling.** Employees keep entering these in Sling. The app reads them fresh every time it
-generates a schedule:
+**From Sling**, read fresh every time the app generates a schedule:
 
-- **Availability**: the weekly windows each employee can work. **Not available on this center's
-  Sling plan** (found 2026-11-24): the center is on Sling's free plan, and availability
-  ("unavailability" in Sling) is a Premium feature. Reading it answers 402, so employees can't
-  enter it either. Where availability comes from is open question 25.
 - **Time off**: approved time off blocks scheduling. Pending requests are shown to the director so
   they can decide before generating. Time off works on the free plan. Requests need approval.
 
 **From the director**, in the app, for what Sling doesn't hold:
 
+- **Availability**: the weekly windows each employee can work, entered in the app (decided
+  2026-11-24). Sling only has it on Premium ("unavailability"; reading it on this center's free plan
+  answers 402). To save typing, the app can suggest each person's windows from the shifts they've
+  worked in Sling, for the director to confirm or correct. Availability can change over time, so
+  each entry can have a start date (for example a new school term).
 - **Hours**: minimum, preferred and maximum hours per week.
 - **Preferences**: days or times an employee would like to work or avoid. Unlike availability, these
   are wishes the scheduler tries to honor, not hard limits.
@@ -149,8 +163,8 @@ generates a schedule:
 - **Work-from-home days**: days they'd rather work from home (for example Carol on Sundays and
   Wednesdays). On those days the scheduler only puts them at the center if nobody else can cover.
 
-Before generating, the app flags employees with no availability, so the director can check with
-them.
+Before generating, the app flags employees with no availability entered, so the director can check
+with them.
 
 ### 4. Demand
 
@@ -164,8 +178,9 @@ them.
   each level using the ratio from Radius. For example, four high school students need enough
   instructors who can teach high school, not just enough instructors. Each appointment carries the
   student's grade, which maps to a level through the center's grade ranges.
-- Most appointments are 60 minutes, some 90, and they start on any 15 minutes (Radius' calendar
-  counts seats in 15-minute slots).
+- Appointments are usually 60 minutes for elementary and middle school and 90 for high school, and
+  usually the same length each time for a given student. They start on any 15 minutes (Radius'
+  calendar counts seats in 15-minute slots), so the scheduler plans in 15-minute blocks.
 - Account for appointments that need specific skills (assessments, test prep).
 - Add the students predicted to come without an appointment (feature 5). Most students book, so
   booked appointments are most of the demand and the prediction fills in the rest.
@@ -173,13 +188,13 @@ them.
   open, even if no students are booked.
 
 **Online** (from Radius): online appointments are counted the same way, by level, but separately.
-They don't need anyone at the center: an instructor at the center can take them, or someone on a
-remote shift. Each appointment has a delivery method ("In-Center" or "Online"), and online students
+They don't need anyone at the center: an instructor at the center can take them alongside
+in-center students (answered 2026-11-24), or someone on a remote shift. Each appointment has a delivery method ("In-Center" or "Online"), and online students
 use the online ratio, which is lower. Online appointments are rare today: 13 of about 3,400 between
 June and November 2026.
 
 **School programs** (off-site): each program's days, times and instructors needed come from center
-setup. This demand is fixed, not predicted.
+setup (Valencia needs 2, Rio del Mar 3). This demand is fixed, not predicted.
 
 ### 5. Predicted attendance
 
@@ -198,7 +213,8 @@ prediction exists.
   Confirm this with the director. Other statuses are Scheduled, Attended, Cancelled, Late cancelled
   and No show, so no-shows are marked too. Matching visits to appointments is the fallback.
 - **Learn each student's pattern**: for each weekday, how likely the student is to come, when they
-  usually arrive and how long they stay. Recent weeks count more than old ones, so a student who stops
+  usually arrive and how long they stay. Length is usually the same each visit, and follows grade
+  (60 minutes, 90 for high school) when there's little history. Recent weeks count more than old ones, so a student who stops
   coming fades out instead of being predicted forever.
 - **Predict a week**: for each time block, expected students = booked appointments + the chance that
   each regular unbooked student is there. A student who has an appointment that day is counted once,
@@ -230,7 +246,7 @@ Builds a draft from the demand, the employees' availability and preferences, and
 - Only assign work that needs a qualification to qualified employees. An instructor only counts
   toward students at levels they can teach.
 - Keep at least two employees at the center whenever it's open, at least one of them a supervisor.
-  People on a remote shift don't count.
+  People on a remote shift don't count; people on a break do.
 - Students at the center are covered only by instructors at the center. Online students can be
   covered by instructors at the center or on a remote shift.
 - Only give remote shifts to employees who can work remotely.
@@ -240,8 +256,8 @@ Builds a draft from the demand, the employees' availability and preferences, and
 **Soft goals** (weighed against each other):
 
 - Cover every time block at every level. Understaffing costs much more than overstaffing. Predicted
-  students are uncertain, so the director chooses how cautious to be: staff for the expected number
-  of students, or leave a margin for a busier-than-expected day.
+  students are staffed for at their expected number, with no extra margin (decided 2026-11-24). A
+  margin can be added later as a setting if the accuracy checks show it's needed.
 - Get each employee close to their preferred hours, and at least their minimum.
 - Honor preferred and avoided times.
 - Spread hours, and unpopular shifts, fairly.
@@ -252,11 +268,13 @@ Builds a draft from the demand, the employees' availability and preferences, and
 - Staff each school program with its preferred employees first.
 - When someone is needed only for online students, give them a remote shift instead of bringing them
   to the center. Online students go to instructors already at the center first, if they have room.
-- Honor work-from-home days, and avoid splitting a day between home and the center.
-- Give everyone working 4 hours or more a 10-minute break. Time it so the people still on the floor
-  meet the ratio and the two-person minimum, which usually means a third person is on. Ideally,
-  schedule enough people for that. When it isn't possible (for example a day with only two people
-  on), schedule anyway and report the missed breaks.
+  Anyone can work remotely.
+- Honor work-from-home days, and avoid splitting a day between home and the center. Work-from-home
+  days are for admin work: don't give that person online students on those days.
+- Give everyone working 4 hours or more a paid 10-minute break, timed so the instructors still
+  teaching meet the ratio. The person on a break still counts toward the two-person minimum, so the
+  scheduler doesn't add a third person just for breaks. A break can only be missed when the ratio
+  can't be met without that person; report those.
 
 **Output:**
 
@@ -281,6 +299,9 @@ and 128 MB of memory.
 ### 8. Publish to Sling
 
 - Create the shifts in Sling through its API, which the Worker already reaches with the stored token.
+- **Leave them unpublished** (decided 2026-11-24): the app creates shifts with Sling's `planning`
+  status, and the director gives them a last look and publishes them in Sling. This may become
+  automatic later.
 - Put each shift under the Sling location and position for where it is (the center, a school
   program, or remote).
 - **Remote shifts**: Sling has no remote shift type, but every shift has a location and an account
@@ -296,12 +317,13 @@ and 128 MB of memory.
 - **Existing repeating shifts**: most of today's schedule is hand-made repeating shifts in Sling
   (weekly, many ending in mid-December 2026). The app won't touch them, so a draft has to either
   treat them as fixed (like locked shifts) or wait until they end. See open question 26.
-- Sling notifies employees of their new shifts on its own.
+- Sling notifies employees of their new shifts on its own once the director publishes them there.
 
 ### 9. Automation
 
 - **Scheduled runs** (Cloudflare Cron Triggers): for example, generate next week's draft every
-  Thursday and notify the director that it's ready for review.
+  Wednesday and notify the director that it's ready for review, so it can be in Sling by Friday,
+  3 days before the week starts.
 - **Change detection**: keep re-reading Radius after a schedule is published. If new or cancelled
   appointments open a coverage gap or a large surplus, alert the director and suggest a fix (for
   example, an available employee who is under their preferred hours).
@@ -350,7 +372,9 @@ parents who email or text instead.
   level within the ratio, so a booking never opens a coverage gap. If there's no such time, offer the
   nearest alternatives, or ask the director whether to add staff. An online appointment can also use
   an instructor on a remote shift; an in-center one can't.
-- Prefer earlier in the day (this center's rule).
+- Prefer earlier in the day (this center's rule). But a booking that would need an extra
+  instructor loses to a later time that has room: the bot offers the later time without asking the
+  director (decided 2026-11-24).
 - After that, prefer times close to when the student usually comes.
 
 **Rollout**, so mistakes stay cheap:
@@ -385,21 +409,24 @@ change.
 
 | Rule | Kind | Supported by |
 | --- | --- | --- |
-| Carol (owner) can teach, but prefers not to teach the whole day so she has time for admin work. | Soft: teaching limit | Roster: teaching limit. Scheduler: on-site time that isn't teaching. |
-| Keiko can't teach high school math or above, so she can't be counted on for those students. | Hard: level | Roster: highest level. Demand counted by level. |
+| Carol (owner) can teach, but at most about 50% of her time on site, so she has time for admin work. | Soft: teaching limit | Roster: teaching limit. Scheduler: on-site time that isn't teaching. |
+| Keiko can teach up to middle school, not high school or above. | Hard: level | Roster: highest level. Demand counted by level (from grade). |
 | Keiko is the preferred teacher for the school programs at Valencia and Rio del Mar. | Soft: preferred staff | Roster: preferred programs. Center setup: school programs. |
-| Carol prefers to work from home on Sundays and Wednesdays. | Soft: work-from-home days | Preferences: work-from-home days. Scheduler: remote shifts. |
+| Carol prefers to work from home on Sundays and Wednesdays, doing admin work, not teaching. | Soft: work-from-home days | Preferences: work-from-home days. Scheduler: remote shifts. |
+| Anyone can work from home. | Roster default | Roster: remote work. |
 | Deven or Grace (assistant center directors) or Carol must be at the center whenever it's open. | Hard: presence | Roster: roles. Center setup: presence rules. |
 | At least two employees must be at the center whenever it's open. | Hard: presence | Center setup: presence rules. |
-| Anyone working 4 hours or more should get a 10-minute break. Ideally there are enough people on for that, but some days will have only two. | Soft: breaks | Center setup: break rule. Scheduler: break timing and missed-break report. |
+| Anyone working 4 hours or more gets a paid 10-minute break. Two people on, one of them on a break, is fine. | Soft: breaks | Center setup: break rule. Scheduler: break timing and missed-break report. |
+| Valencia needs 2 instructors, Rio del Mar 3. | Hard: program staffing | Center setup: school programs. |
 | Appointments should go as early in the day as possible. | Soft: booking | Booking assistant (feature 11): ranking times. |
 
 These interact. When Carol is the supervisor on site, she can be doing admin work instead of
 teaching, so the scheduler tracks on-site time and teaching time separately. Someone on a break
-doesn't count toward the two-person minimum, so breaks usually need a third person on.
+still counts toward the two-person minimum, but not toward the ratio, so a break needs someone else
+free to teach only when students are there.
 
-On Sundays and Wednesdays, Carol at home doesn't count toward the presence rules, so Deven or Grace
-has to be at the center whenever it's open those days. If neither can be, the scheduler brings Carol
+The center is open on Sundays. On Sundays and Wednesdays, Carol at home doesn't count toward the
+presence rules, so Deven or Grace has to be at the center whenever it's open those days. If neither can be, the scheduler brings Carol
 in and reports that her preference wasn't met.
 
 No employees are minors, so the app doesn't need labor rules for minors.
@@ -418,13 +445,13 @@ The Worker and the Workflows both use:
    D1               settings, roster details, visits, drafts, Sling shift IDs, booking log
    Durable Objects  one per linked account: sign-in lock and current token
    Radius           appointments, ratio, sign-in/out history (read); appointments (write, booking only)
-   Sling            roster, availability, time off (read); shifts (write)
+   Sling            roster, time off (read); shifts (write, unpublished)
    Claude API       reads parents' messages and writes replies (booking assistant)
 ```
 
 - **Integrations**: `worker/radius.ts` and `worker/sling.ts` grow typed functions for the data
   the scheduler needs (appointments and whether each is online, ratio and visits; users, positions,
-  locations, availability, time off, shifts). Nothing else talks to Radius or Sling directly, so when either one changes, only these
+  locations, time off, shifts). Nothing else talks to Radius or Sling directly, so when either one changes, only these
   files change.
 - **Scheduler**: a pure module (planned as `worker/scheduler/`) with no network or database
   access. It takes demand, employees, rules and locked shifts, and returns shifts and a report. That
@@ -435,9 +462,9 @@ The Worker and the Workflows both use:
   using the credentials already stored.
 - **Storage (tentative)**: tables for center settings, locations and school programs, roster details
   (roles, levels, teaching limits, preferred programs, remote work, work-from-home days, hour
-  preferences), student visits, attendance
+  preferences, availability), student visits, attendance
   overrides and marked dates, schedule runs, draft shifts, and the mapping from draft shifts to Sling
-  shift IDs. Time off stays in Sling, and availability too if the center moves to Sling Premium (open question 25). Each schedule run saves a copy of the inputs it
+  shift IDs. Time off stays in Sling. Each schedule run saves a copy of the inputs it
   used, so a draft can be explained later even after Sling or Radius change.
 
 ### Cloudflare building blocks
@@ -582,8 +609,8 @@ records let its accuracy be checked against past weeks right away.
 | Phase | Scope | Status |
 | --- | --- | --- |
 | 0. Foundations | Login with Radius, link Sling, embedded views, Cloudflare + D1 setup | Done |
-| 1. Read the data | Groundwork: generated types, staging environment, a Durable Object sign-in lock per account, Sling sign-in moved into a Workflow. Then read Radius appointments (with student levels, and whether each is online) and the ratio, and the Sling roster, locations, time off and existing shifts (Sling availability is Premium only, see open question 25). Show booked demand per time block in the app. | In progress: groundwork built 2026-11-23 (staging still needs its D1 database). Reading the data is next. |
-| 2. Setup | Center setup (hours, presence rules, school programs, the Remote location). Roster details: roles, levels, teaching limits, preferred programs, remote work, work-from-home days, hour preferences. | Planned |
+| 1. Read the data | Groundwork: generated types, staging environment, a Durable Object sign-in lock per account, Sling sign-in moved into a Workflow. Then read Radius appointments (with student levels, and whether each is online) and the ratio, and the Sling roster, locations, time off and existing shifts. Show booked demand per time block in the app. | In progress: groundwork built 2026-11-23 (staging still needs its D1 database). Reading the data is next. |
+| 2. Setup | Center setup (hours, presence rules, school programs, the Remote location). Roster details: roles, levels, teaching limits, preferred programs, remote work, work-from-home days, hour preferences. Availability for each employee, suggested from past Sling shifts. | Planned |
 | 3. Generate drafts | Switch to Workers Paid for the scheduler's CPU time. Scheduler v1 (heuristic) with the coverage report. No publishing yet. | Planned |
 | 4. Review and edit | Calendar view of the draft, manual edits, locking, regenerate around locks. | Planned |
 | 5. Publish | Create, update and remove the app's shifts in Sling. | Planned |
@@ -613,7 +640,9 @@ records let its accuracy be checked against past weeks right away.
   needs, and delete old records once they stop being useful.
 - **Rest breaks**: if the center is in California, employers must give a paid 10-minute rest break
   for every 4 hours worked (or major part of 4 hours). For each day a break is missed, the employee
-  is owed an extra hour of pay. Check the center's policy for days with only two people on.
+  is owed an extra hour of pay. The center's breaks are paid, and a break with only two people on is
+  fine, so a break is missed only when the ratio can't spare the person; the scheduler reports
+  those.
 - **Writing to Radius**: booking is the app's only write to Radius, and a bad booking affects a real
   family. Keep the director approving bookings until the bot has a track record.
 - **Booking assistant mistakes**: the model can misread a message. Code checks every request
@@ -623,66 +652,74 @@ records let its accuracy be checked against past weeks right away.
 
 ## Open questions
 
+Answered questions are kept, struck through, with their answers.
+
 1. ~~Where in Radius is the student-to-instructor ratio set, and does it vary by level or appointment
    type?~~ Answered 2026-11-23: in Center Settings, per level, with separate in-center and online
    ratios (feature 1).
 2. ~~Does Sling store weekly hour limits or preferences for employees, or does the director enter them
    in the app?~~ Answered 2026-11-24: users have an `hoursCap`, but it's 0 (unset) for everyone, and
    preferences aren't in Sling. The director enters them in the app.
-3. How long are appointments, and what time block size should the scheduler use? Partly answered
-   2026-11-23: most are 60 minutes and some 90, starting on any 15 minutes. Radius counts seats in
-   15-minute slots. The block size is still to decide.
-4. One center, or several (each with its own settings, roster and accounts)?
-5. How far ahead is the schedule made, and when do employees need to see it?
+3. ~~How long are appointments, and what time block size should the scheduler use?~~ Answered
+   2026-11-24: usually 60 minutes for elementary and middle school and 90 for high school, and usually
+   the same length each time for a given student. They start on any 15 minutes, so the scheduler
+   plans in 15-minute blocks (proposed, not yet built).
+4. ~~One center, or several?~~ Answered 2026-11-24: one center.
+5. ~~How far ahead is the schedule made, and when do employees need to see it?~~ Answered 2026-11-24:
+   employees should have it 3 days ahead (feature 1).
 6. ~~Visit history: what request does the Student Attendance Report make for its data, and how far
    back does this center's history go? Does a visit record the instructor? Can a walk-in be told
    apart from a booked visit other than by matching visits to appointments?~~ Answered 2026-11-23:
    see "Radius endpoints found so far". History starts 2023-01-03. Visits don't record the
    instructor. Walk-ins seem to appear as "Drop-In" appointments; confirm with the director.
-7. Should the app publish shifts straight to employees, or leave them unpublished in Sling for a final
-   check there?
+7. ~~Should the app publish shifts straight to employees, or leave them unpublished in Sling for a
+   final check there?~~ Answered 2026-11-24: leave them unpublished for now (feature 8).
 8. How should the app notify the director: email (needs a domain to send from), or something else?
-9. Besides instructors, which roles need scheduling (lead instructor, front desk, director)?
+9. ~~Besides instructors, which roles need scheduling?~~ Answered 2026-11-24: any employee can be
+   scheduled.
 10. Is a heuristic scheduler good enough, or is an optimization solver needed, and does one fit in
     Workers?
-11. How cautious should staffing be for predicted students: the expected number, or a margin on top?
-12. How much teaching does Carol want: a number of hours per day, a share of her time, or particular
-    times of day?
+11. ~~How cautious should staffing be for predicted students?~~ Answered 2026-11-24: the expected
+    number, no margin.
+12. ~~How much teaching does Carol want?~~ Answered 2026-11-24: ideally not much, 50% of her time on
+    site at most.
 13. ~~Does Carol's time go into Sling like everyone else's, or does the app only plan around it?~~
     Answered 2026-11-24: her shifts are in Sling, under the Owner position.
-14. Partly answered 2026-11-23: appointments carry the student's grade, and Radius groups grades
-    into the center's levels (Great Foundations, Elementary, Middle, High), each with its own ratio.
-    Still open: is grade the right measure, or the level of math the student is working on? Does
-    test prep need its own level? Can Keiko teach middle school?
+14. ~~Is grade the right measure of a student's level, or the level of math they're working on? Can
+    Keiko teach middle school?~~ Answered 2026-11-24: use grade for now. Keiko can teach middle
+    school. Still open: does test prep need its own level?
 15. For the Valencia and Rio del Mar programs: which days and times, how many instructors, are they in
-    Radius or Sling already, and how long is the drive from the center? Partly answered 2026-11-24:
-    both are Sling locations, with the days, times and staffing in "Sling endpoints found so far".
-    Still open: whether they're in Radius, how many instructors each needs, and the drive.
-16. Are breaks paid or unpaid, and should the scheduler aim for a third person whenever someone is
-    due a break?
+    Radius or Sling already, and how long is the drive from the center? Answered 2026-11-24 except the
+    drive: both are Sling locations (days and times in "Sling endpoints found so far"), they're not in
+    Radius, and Valencia needs 2 instructors, Rio del Mar 3. Still open: the drive time from the
+    center to each.
+16. ~~Are breaks paid or unpaid, and should the scheduler aim for a third person whenever someone is
+    due a break?~~ Answered 2026-11-24: paid. No third person: two people on, one of them on a
+    break, is fine.
 17. Booking assistant: which email address and phone number do parents use today, and who controls
     them? That decides how the bot receives messages and where replies come from.
 18. Do bookings made in myMathnasium show up in Radius' calendar right away? Can the center limit
     which times parents can pick there, for example to steer bookings earlier in the day?
 19. Besides sessions left this month, does anything else limit booking: a weekly maximum, a fixed
     appointment length?
-20. If the earliest time in a parent's window would need an extra instructor but a later time has
-    room, should the bot offer the later time, or ask the director first?
+20. ~~If the earliest time in a parent's window would need an extra instructor but a later time has
+    room, should the bot offer the later time, or ask the director first?~~ Answered 2026-11-24: offer
+    the later time.
 21. ~~How does Radius mark an online appointment: a field on the appointment, a separate resource,
     or something else? Is the ratio the same for online students?~~ Answered 2026-11-23: a delivery
     method field on the appointment. Online students have their own, lower ratio.
-22. Can an instructor at the center teach online students alongside in-center ones, within the same
-    ratio, or do online students need their own instructor?
-23. Besides Carol, who can work from home? ~~Does the center use Sling's time clock with
-    geofencing?~~ The time clock is off (checked 2026-11-24). Should remote shifts use Sling's
-    existing "Online" location?
-24. On Carol's days at home, should the scheduler give her online students to teach, or keep those
-    days for admin work? Is the center open on Sundays? Partly answered 2026-11-24: Sling has center
-    shifts on Sundays 12–4 PM.
-25. Where does availability come from, since this center's Sling plan doesn't have it? Options:
-    upgrade Sling to Premium (about $2 per user per month in Sling's pricing), have the director
-    enter each employee's weekly availability in the app, or suggest it from the shifts each person
-    has worked and let the director confirm it.
+22. ~~Can an instructor at the center teach online students alongside in-center ones?~~ Answered
+    2026-11-24: yes. Still open: how a mixed group is counted against the ratio. Proposed: each
+    student uses up their own ratio's share (an in-center elementary student 1/4 of an instructor, an
+    online one 1/3), and the total can't pass one instructor.
+23. ~~Besides Carol, who can work from home? Does the center use Sling's time clock with
+    geofencing?~~ Answered 2026-11-24: anyone can. The time clock is off. Still open: should remote
+    shifts use Sling's existing "Online" location?
+24. ~~On Carol's days at home, should the scheduler give her online students to teach, or keep those
+    days for admin work? Is the center open on Sundays?~~ Answered 2026-11-24: keep them for admin
+    work. The center is open on Sundays.
+25. ~~Where does availability come from, since this center's Sling plan doesn't have it?~~ Answered
+    2026-11-24: it's built into the app (feature 3).
 26. What happens to the hand-made repeating shifts already in Sling? The app can treat them as fixed
     and schedule around them, or the director can let them end and have the app take over those
     times.
