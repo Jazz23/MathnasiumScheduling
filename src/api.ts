@@ -168,6 +168,8 @@ export function mondayOf(date: string): string {
 }
 
 export interface DraftShift {
+  id: string;
+  locked: boolean;
   slingUserId: number;
   name: string;
   date: string;
@@ -179,6 +181,7 @@ export interface DraftShift {
   teachingMinutes: number;
   breakStart: string | null;
   breakMissed: boolean;
+  issues: string[];
 }
 
 export interface CoverageBlock {
@@ -197,6 +200,7 @@ export interface CoverageBlock {
 export interface Draft {
   weekStart: string;
   generatedAt: number;
+  updatedAt: number;
   status: string;
   solveSeconds: number;
   shifts: DraftShift[];
@@ -223,4 +227,8 @@ export interface Draft {
     short: number;
   }[];
   warnings: string[];
+  choices: { people: { slingUserId: number; name: string }[]; programs: { id: number; name: string }[] };
 }
+
+/** What the client sends when editing a draft's shifts. */
+export type ShiftEdit = Pick<DraftShift, "slingUserId" | "date" | "start" | "end" | "where" | "programId" | "locked"> & { id?: string };

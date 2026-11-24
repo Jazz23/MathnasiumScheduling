@@ -208,6 +208,29 @@ body {
   text-align: left;
   opacity: 1;
 }
+.draft-grid .shift {
+  display: block;
+  width: 100%;
+  margin: 0 0 0.2rem;
+  padding: 0.15rem 0.3rem;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.04);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  white-space: normal;
+  cursor: pointer;
+}
+.draft-grid .shift.warn {
+  border-color: #ffb36b;
+}
+.draft-grid .shift.selected {
+  background: rgba(210, 38, 48, 0.25);
+}
+.shift-editor {
+  max-width: 960px;
+}
 .plain-list {
   margin: 0.25rem 0 0.75rem;
   padding-left: 1.25rem;

@@ -360,7 +360,8 @@ either form fits; the compact one is still faster. A greedy heuristic stays the 
 - Show each shift's break in Sling: shifts have a `breakDuration` field in minutes. No shift uses it
   today, and Sling's automatic breaks are off.
 - Store the Sling ID of every shift the app creates. Publishing again updates or removes those shifts
-  instead of duplicating them. The app never changes shifts it didn't create.
+  instead of duplicating them. The app never changes or removes shifts it didn't create: every shift
+  already in Sling stays exactly as it is (decided 2026-11-24). Drafts only add new shifts around them.
 - **Existing repeating shifts**: most of today's schedule is hand-made repeating shifts in Sling
   (weekly, many ending in mid-December 2026). The app won't touch them. Drafts treat them as fixed,
   like locked shifts, and schedule around them (decided 2026-11-24).
@@ -649,7 +650,7 @@ records let its accuracy be checked against past weeks right away.
 | 1. Read the data | Groundwork: generated types, staging environment, a Durable Object sign-in lock per account, Sling sign-in moved into a Workflow. Then read Radius appointments (with student levels, and whether each is online) and the ratio, and the Sling roster, locations, time off and existing shifts. Show booked demand per time block in the app. | Built 2026-11-24. Not yet: flagging appointments left over from ended enrollments. |
 | 2. Setup | Center setup (hours, presence rules, school programs, the remote location). Roster details: roles, levels, teaching limits, assigned programs, remote work, work-from-home days, hour preferences. Availability for each employee, suggested from past Sling shifts. | Built 2026-11-24 |
 | 3. Generate drafts | Scheduler v1 (HiGHS, decided 2026-11-24) with the coverage report, in the Draft tab. No publishing yet. | Built 2026-11-24. Not yet: fairness, consistency with previous weeks, test prep and assessment qualifications, breaks inside the model. |
-| 4. Review and edit | Calendar view of the draft, manual edits, locking, regenerate around locks. | Planned |
+| 4. Review and edit | Calendar view of the draft, manual edits, locking, regenerate around locks. | Built 2026-11-24, in the Draft tab. Edits are checked against the data read when the draft was generated. |
 | 5. Publish | Create, update and remove the app's shifts in Sling. | Planned |
 | 6. Predict attendance | Read students' sign-in/out history, learn unbooked students' patterns, show booked vs. predicted demand, director overrides, accuracy checks against past weeks. | Planned |
 | 7. Automation | Weekly run and nightly sync as Lambdas on EventBridge Scheduler, change detection, email to the director. | Planned |

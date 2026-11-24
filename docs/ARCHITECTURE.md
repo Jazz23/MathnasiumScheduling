@@ -79,7 +79,8 @@ doesn't cache them, and passes on every header except `Host`.
 | `PUT /api/roster/:slingUserId/preferences` | `server/roster.ts` | Replaces a person's prefer/avoid times. |
 | `GET /api/roster/availability-suggestions?weeks=` | `server/roster.ts` | Each person's usual times from their past Sling shifts. |
 | `GET /api/drafts/:weekStart` | `server/draftApi.ts` | The latest draft for the week starting that Monday, or null. |
-| `POST /api/drafts/:weekStart/generate` | `server/draftApi.ts` | Generates a new draft for the week and stores it, replacing the last one. |
+| `POST /api/drafts/:weekStart/generate` | `server/draftApi.ts` | Generates a new draft for the week, keeping the last draft's locked shifts, and stores it. |
+| `PUT /api/drafts/:weekStart/shifts` | `server/draftApi.ts` | Replaces the draft's shifts with the edited list and checks them. |
 | `GET /api/db/health` | `server/app.ts` | Checks DynamoDB. |
 
 Any other `/api/*` path returns 404 as JSON.
@@ -191,7 +192,8 @@ Everything Radius and Sling don't hold is in DynamoDB:
 
 `POST /api/drafts/:weekStart/generate` (`server/draftApi.ts`) reads the week from Radius (levels and
 appointments) and Sling (existing shifts and time off), one request after another, then solves it
-with `server/scheduler.ts` and stores the result as one item (`DRAFT#<weekStart>`, the draft as JSON).
+with `server/scheduler.ts` and stores the result as one item (`DRAFT#<weekStart>`: the draft, and the
+inputs it was made from, both as JSON).
 It runs within the request: Radius and Sling take a few seconds and the solver stops after 25
 seconds with the best draft so far, inside CloudFront's 60.
 
@@ -207,6 +209,15 @@ presence, program staffing, minimum and preferred hours and teaching limits have
 with weights (`W` in `server/scheduler.ts`), so a draft always comes back and the slack is the
 coverage report. Existing Sling shifts are fixed: they count toward presence, teaching and program
 staffing. The presence rules apply over opening hours plus the setup and cleanup minutes around them.
+
+**Editing** (feature 7): the Draft tab sends the whole edited list of shifts to
+`PUT /api/drafts/:weekStart/shifts`. The server checks it with the same model, using the stored
+inputs (so an edit doesn't read Radius or Sling) and with `draftNew` off: every shift is fixed, and
+the solver only works out teaching, breaks and the coverage report. Each shift gets `issues` for the
+rules it breaks (outside availability, during time off, overlapping another shift, too short or
+long, at the center on a work-from-home day), and the hours table flags going over maximum hours.
+Shifts edited or added by hand are locked. Generating again reads Radius and Sling fresh and keeps
+the locked shifts as fixed.
 
 Simplifications for now: breaks are placed after solving, in the block nearest the middle of the
 shift where the others still cover the whole instructors' worth of students (a fraction over is

@@ -14,8 +14,12 @@
 // and hours have slack variables with penalties, so the model always has a
 // solution and the slack shows what couldn't be met.
 //
-// Existing Sling shifts are fixed: the person is busy then, and a fixed shift
-// at the center counts toward presence and teaching like a drafted one.
+// Fixed shifts: existing Sling shifts, and the draft shifts to keep (locked
+// ones when generating again, every one when checking an edited draft). The
+// person is busy then, and a fixed shift counts toward presence, teaching and
+// program staffing like a drafted one. With `draftNew` false nothing new is
+// drafted: the model then only works out teaching and the coverage report,
+// which is how a hand-edited draft is checked.
 
 import type { DemandDay } from "./demand";
 import type { Level } from "./radiusData";
@@ -61,9 +65,16 @@ export interface SchedulerInput {
   /** Existing Sling shifts in the week, kept as they are. */
   fixedShifts: SlingShift[];
   timeOff: SlingTimeOff[];
+  /** Draft shifts to keep as they are (they stay in the draft). */
+  keep: DraftShift[];
+  /** Whether to draft new shifts around the fixed ones, or only check them. */
+  draftNew: boolean;
 }
 
 export interface DraftShift {
+  id: string;
+  /** Kept when the draft is generated again. */
+  locked: boolean;
   slingUserId: number;
   name: string;
   date: string;
@@ -77,6 +88,8 @@ export interface DraftShift {
   breakStart: string | null;
   /** True when the shift is long enough for a break but none fit without leaving students uncovered. */
   breakMissed: boolean;
+  /** Rules this shift breaks (from hand edits, or kept from an earlier draft). */
+  issues: string[];
 }
 
 export interface CoverageBlock {
@@ -126,7 +139,10 @@ export interface ProgramStaffing {
 
 export interface Draft {
   weekStart: string;
+  /** When Radius and Sling were read for this draft. */
   generatedAt: number;
+  /** When the draft last changed (generated or edited). */
+  updatedAt: number;
   /** HiGHS' model status: Optimal, or Time limit reached with the best found. */
   status: string;
   solveSeconds: number;
@@ -135,6 +151,8 @@ export interface Draft {
   employees: EmployeeSummary[];
   programs: ProgramStaffing[];
   warnings: string[];
+  /** For editing: who can be given shifts, and the school programs. */
+  choices: { people: { slingUserId: number; name: string }[]; programs: { id: number; name: string }[] };
 }
 
 /** The part of HiGHS' API the scheduler uses. */
@@ -167,6 +185,16 @@ interface Interval {
 }
 
 const overlaps = (a: Interval, b: Interval) => a.start < b.end && b.start < a.end;
+
+/** A shift the model can't change: from Sling, or a draft shift being kept. */
+interface Fixed extends Interval {
+  userId: number;
+  date: string;
+  kind: "center" | "remote" | "program" | "other";
+  programId: number | null;
+  /** The draft shift, when it's one; null for a Sling shift. */
+  draft: DraftShift | null;
+}
 
 /** The part of a shift on `date`, in minutes. Shifts running past midnight end at 24:00. */
 function shiftInterval(s: SlingShift): Interval {
@@ -219,6 +247,8 @@ interface PersonDay {
   free: Set<number>;
   /** Blocks available at all (ignoring existing shifts), for gap explanations. */
   available: Set<number>;
+  /** Blocks of approved time off. */
+  timeOff: Set<number>;
   /** Blocks of an existing shift at the center, and on a remote shift. */
   fixedCenter: Set<number>;
   fixedRemote: Set<number>;
@@ -234,6 +264,8 @@ interface Session {
   /** The session plus the drive each way. */
   busy: Interval;
   existing: number;
+  /** Draft shifts being kept for this session. */
+  kept: DraftShift[];
   vars: { e: number; v: string }[];
   short: string;
 }
@@ -245,9 +277,39 @@ export function solveWeek(input: SchedulerInput, solver: Solver, opts: { timeLim
 
   const people = input.employees.filter((e) => e.active && e.schedulable);
   const onRoster = new Map(input.employees.map((e) => [e.slingUserId, e]));
-  const isCenter = (s: SlingShift) => settings.slingCenterLocationId !== null && s.locationId === settings.slingCenterLocationId;
-  const isRemote = (s: SlingShift) => settings.slingRemoteLocationId !== null && s.locationId === settings.slingRemoteLocationId;
-  const fixed = input.fixedShifts.filter((s) => s.userId !== null && input.dates.includes(s.date));
+  const fixed: Fixed[] = [
+    ...input.fixedShifts
+      .filter((s) => s.userId !== null && input.dates.includes(s.date))
+      .map((s): Fixed => {
+        const program = s.locationId === null ? undefined : input.programs.find((p) => p.slingLocationId === s.locationId);
+        return {
+          ...shiftInterval(s),
+          userId: s.userId!,
+          date: s.date,
+          kind:
+            settings.slingCenterLocationId !== null && s.locationId === settings.slingCenterLocationId
+              ? "center"
+              : settings.slingRemoteLocationId !== null && s.locationId === settings.slingRemoteLocationId
+                ? "remote"
+                : program
+                  ? "program"
+                  : "other",
+          programId: program?.id ?? null,
+          draft: null,
+        };
+      }),
+    ...input.keep
+      .filter((s) => input.dates.includes(s.date))
+      .map((s): Fixed => ({
+        start: toMinutes(s.start),
+        end: toMinutes(s.end),
+        userId: s.slingUserId,
+        date: s.date,
+        kind: s.where,
+        programId: s.programId,
+        draft: s,
+      })),
+  ];
 
   if (settings.slingCenterLocationId === null) {
     warnings.push("The center's Sling location isn't set (Center tab), so existing Sling shifts don't count toward coverage.");
@@ -294,10 +356,9 @@ export function solveWeek(input: SchedulerInput, solver: Solver, opts: { timeLim
       for (let t = first; t <= last; t += BLOCK) centerBlocks.push(t);
     }
     const shown = [...centerBlocks, ...online.keys()];
-    for (const s of fixed) {
-      if (s.date !== date || !isCenter(s)) continue;
-      const iv = shiftInterval(s);
-      for (let t = Math.floor(iv.start / BLOCK) * BLOCK; t < iv.end; t += BLOCK) shown.push(t);
+    for (const f of fixed) {
+      if (f.date !== date || f.kind !== "center") continue;
+      for (let t = Math.floor(f.start / BLOCK) * BLOCK; t < f.end; t += BLOCK) shown.push(t);
     }
     const reportBlocks: number[] = [];
     if (shown.length) for (let t = Math.min(...shown); t <= Math.max(...shown); t += BLOCK) reportBlocks.push(t);
@@ -314,33 +375,33 @@ export function solveWeek(input: SchedulerInput, solver: Solver, opts: { timeLim
   const personDays: PersonDay[][] = people.map((e) => {
     const pattern = availabilityOn(e, input.dates[0]!);
     const laterPatterns = e.availability.filter((p) => p.effectiveFrom > input.dates[0]! && p.effectiveFrom <= input.dates.at(-1)!);
-    if (!pattern && laterPatterns.length === 0) warnings.push(`${e.name} has no availability entered for this week, so they aren't drafted.`);
+    if (!pattern && laterPatterns.length === 0 && input.draftNew) warnings.push(`${e.name} has no availability entered for this week, so they aren't drafted.`);
     return days.map(({ date }) => {
       const windows = (availabilityOn(e, date)?.windows ?? []).filter((w) => w.weekday === weekday(date));
       const off = approvedTimeOff.filter((t) => t.userId === e.slingUserId).flatMap((t) => timeOffOn(t, date) ?? []);
-      const theirs = fixed.filter((s) => s.userId === e.slingUserId && s.date === date);
+      const theirs = fixed.filter((f) => f.userId === e.slingUserId && f.date === date);
       const fixedCenter = new Set<number>();
       const fixedRemote = new Set<number>();
       const fixedAny = new Set<number>();
-      for (const s of theirs) {
-        const iv = shiftInterval(s);
-        for (let t = Math.floor(iv.start / BLOCK) * BLOCK; t < iv.end; t += BLOCK) {
+      for (const f of theirs) {
+        for (let t = Math.floor(f.start / BLOCK) * BLOCK; t < f.end; t += BLOCK) {
           fixedAny.add(t);
-          if (isCenter(s)) fixedCenter.add(t);
-          else if (isRemote(s)) fixedRemote.add(t);
+          if (f.kind === "center") fixedCenter.add(t);
+          else if (f.kind === "remote") fixedRemote.add(t);
         }
       }
       const available = new Set<number>();
       const free = new Set<number>();
+      const timeOff = new Set<number>();
+      for (let t = 0; t < DAY; t += BLOCK) if (off.some((o) => overlaps(o, { start: t, end: t + BLOCK }))) timeOff.add(t);
       for (const w of windows) {
         for (let t = Math.ceil(toMinutes(w.start) / BLOCK) * BLOCK; t + BLOCK <= toMinutes(w.end); t += BLOCK) {
-          const block = { start: t, end: t + BLOCK };
-          if (off.some((o) => overlaps(o, block))) continue;
+          if (timeOff.has(t)) continue;
           available.add(t);
-          if (!fixedAny.has(t)) free.add(t);
+          if (!fixedAny.has(t) && input.draftNew) free.add(t);
         }
       }
-      return { free, available, fixedCenter, fixedRemote };
+      return { free, available, timeOff, fixedCenter, fixedRemote };
     });
   });
 
@@ -502,11 +563,11 @@ export function solveWeek(input: SchedulerInput, solver: Solver, opts: { timeLim
         const start = toMinutes(s.start);
         const end = toMinutes(s.end);
         const busy = { start: Math.max(0, start - program.travelMinutes), end: Math.min(DAY, end + program.travelMinutes) };
-        const existing = program.slingLocationId
-          ? fixed.filter((f) => f.date === day.date && f.locationId === program.slingLocationId && overlaps(shiftInterval(f), { start, end })).length
-          : 0;
+        const here = fixed.filter((f) => f.date === day.date && f.kind === "program" && f.programId === program.id && overlaps(f, { start, end }));
+        const existing = here.filter((f) => !f.draft).length;
+        const kept = here.flatMap((f) => (f.draft ? [f.draft] : []));
         const key = `${program.id}_${day.d}_${start}`;
-        const session: Session = { key, program, date: day.date, d: day.d, start, end, busy, existing, vars: [], short: `ps_${key}` };
+        const session: Session = { key, program, date: day.date, d: day.d, start, end, busy, existing, kept, vars: [], short: `ps_${key}` };
         people.forEach((e, i) => {
           if (!canTeachAnything(e)) return;
           const pd = personDays[i]![day.d]!;
@@ -517,7 +578,7 @@ export function solveWeek(input: SchedulerInput, solver: Solver, opts: { timeLim
           hoursTerms[i]!.push([(busy.end - busy.start) / 60, v]);
           if (assigned.size && !assigned.has(e.slingUserId)) obj.push([W.notAssigned, v]);
         });
-        const needed = Math.max(0, program.instructorsNeeded - existing);
+        const needed = Math.max(0, program.instructorsNeeded - existing - kept.length);
         if (needed > 0) {
           obj.push([W.programShort, session.short]);
           row([...session.vars.map(({ v }) => [1, v] as Term), [1, session.short]], ">=", needed);
@@ -535,12 +596,10 @@ export function solveWeek(input: SchedulerInput, solver: Solver, opts: { timeLim
   const fixedOnSite = (date: string, t: number) => {
     let all = 0;
     let sup = 0;
-    for (const s of fixed) {
-      if (s.date !== date || !isCenter(s)) continue;
-      const iv = shiftInterval(s);
-      if (iv.start > t || iv.end <= t) continue;
+    for (const f of fixed) {
+      if (f.date !== date || f.kind !== "center" || f.start > t || f.end <= t) continue;
       all++;
-      const e = onRoster.get(s.userId!);
+      const e = onRoster.get(f.userId);
       if (e && SUPERVISOR_ROLES.has(e.role)) sup++;
     }
     return { all, sup };
@@ -575,21 +634,23 @@ export function solveWeek(input: SchedulerInput, solver: Solver, opts: { timeLim
   }
 
   // Hours, and teaching limits.
-  const existingHours = people.map((e) =>
-    fixed.filter((s) => s.userId === e.slingUserId).reduce((h, s) => h + (shiftInterval(s).end - shiftInterval(s).start) / 60, 0),
-  );
+  const fixedHours = (e: Employee, drafts: boolean) =>
+    fixed.filter((f) => f.userId === e.slingUserId && !!f.draft === drafts).reduce((h, f) => h + (f.end - f.start) / 60, 0);
+  const existingHours = people.map((e) => fixedHours(e, false));
+  const keptHours = people.map((e) => fixedHours(e, true));
   people.forEach((e, i) => {
     const h = hoursTerms[i]!;
-    const fixedH = existingHours[i]!;
-    if (!h.length) return;
-    if (e.maxHours !== null) row(h, "<=", Math.max(0, e.maxHours - fixedH));
-    if (e.preferredHours !== null) {
-      obj.push([W.underPreferred, `hu_${i}`], [W.overPreferred, `ho_${i}`]);
-      row([...h, [1, `hu_${i}`], [-1, `ho_${i}`]], "=", e.preferredHours - fixedH);
-    }
-    if (e.minHours !== null && e.minHours > fixedH) {
-      obj.push([W.belowMinimum, `hm_${i}`]);
-      row([...h, [1, `hm_${i}`]], ">=", e.minHours - fixedH);
+    const fixedH = existingHours[i]! + keptHours[i]!;
+    if (h.length) {
+      if (e.maxHours !== null) row(h, "<=", Math.max(0, e.maxHours - fixedH));
+      if (e.preferredHours !== null) {
+        obj.push([W.underPreferred, `hu_${i}`], [W.overPreferred, `ho_${i}`]);
+        row([...h, [1, `hu_${i}`], [-1, `ho_${i}`]], "=", e.preferredHours - fixedH);
+      }
+      if (e.minHours !== null && e.minHours > fixedH) {
+        obj.push([W.belowMinimum, `hm_${i}`]);
+        row([...h, [1, `hm_${i}`]], ">=", e.minHours - fixedH);
+      }
     }
     if (e.teachingLimitPct !== null && teachTerms[i]!.length) {
       const share = e.teachingLimitPct / 100;
@@ -621,7 +682,36 @@ export function solveWeek(input: SchedulerInput, solver: Solver, opts: { timeLim
   const yes = (name: string | undefined) => !!name && val(name) > 0.5;
 
   // --- Read the draft back ---
+  const NEW = { locked: false, breakStart: null, breakMissed: false, issues: [] as string[] };
   const shifts: DraftShift[] = [];
+  const personIdx = new Map(people.map((e, i) => [e.slingUserId, i]));
+  const programById = new Map(input.programs.map((p) => [p.id, p]));
+  for (const f of fixed) {
+    if (!f.draft) continue;
+    const i = personIdx.get(f.userId);
+    const d = input.dates.indexOf(f.date);
+    let teachingMinutes = 0;
+    if (f.kind === "program") teachingMinutes = Math.max(0, f.end - f.start - 2 * (programById.get(f.programId!)?.travelMinutes ?? 0));
+    else if (i !== undefined) {
+      for (let t = Math.floor(f.start / BLOCK) * BLOCK; t < f.end; t += BLOCK) {
+        for (const v of teachOf.get(`${i}:${d}:${t}`) ?? []) teachingMinutes += val(v) * BLOCK;
+      }
+    }
+    shifts.push({
+      ...f.draft,
+      name: onRoster.get(f.userId)?.name ?? f.draft.name,
+      slingLocationId:
+        f.kind === "center"
+          ? settings.slingCenterLocationId
+          : f.kind === "remote"
+            ? settings.slingRemoteLocationId
+            : (programById.get(f.programId!)?.slingLocationId ?? null),
+      teachingMinutes: Math.round(teachingMinutes),
+      breakStart: null,
+      breakMissed: false,
+      issues: [],
+    });
+  }
   people.forEach((e, i) => {
     for (const day of days) {
       const runs = (vars: Map<string, string>, blocks: number[]) => {
@@ -641,6 +731,7 @@ export function solveWeek(input: SchedulerInput, solver: Solver, opts: { timeLim
       };
       for (const iv of runs(onVar, day.centerBlocks)) {
         shifts.push({
+          id: crypto.randomUUID(),
           slingUserId: e.slingUserId,
           name: e.name,
           date: day.date,
@@ -650,12 +741,12 @@ export function solveWeek(input: SchedulerInput, solver: Solver, opts: { timeLim
           programId: null,
           slingLocationId: settings.slingCenterLocationId,
           teachingMinutes: teaching(iv),
-          breakStart: null,
-          breakMissed: false,
+          ...NEW,
         });
       }
       for (const iv of runs(rmVar, [...day.online.keys()].sort((a, b) => a - b))) {
         shifts.push({
+          id: crypto.randomUUID(),
           slingUserId: e.slingUserId,
           name: e.name,
           date: day.date,
@@ -665,8 +756,7 @@ export function solveWeek(input: SchedulerInput, solver: Solver, opts: { timeLim
           programId: null,
           slingLocationId: settings.slingRemoteLocationId,
           teachingMinutes: teaching(iv),
-          breakStart: null,
-          breakMissed: false,
+          ...NEW,
         });
       }
     }
@@ -675,6 +765,7 @@ export function solveWeek(input: SchedulerInput, solver: Solver, opts: { timeLim
     const drafted = s.vars.filter(({ v }) => yes(v));
     for (const { e } of drafted) {
       shifts.push({
+        id: crypto.randomUUID(),
         slingUserId: people[e]!.slingUserId,
         name: people[e]!.name,
         date: s.date,
@@ -684,8 +775,7 @@ export function solveWeek(input: SchedulerInput, solver: Solver, opts: { timeLim
         programId: s.program.id,
         slingLocationId: s.program.slingLocationId,
         teachingMinutes: s.end - s.start,
-        breakStart: null,
-        breakMissed: false,
+        ...NEW,
       });
     }
     return {
@@ -696,7 +786,7 @@ export function solveWeek(input: SchedulerInput, solver: Solver, opts: { timeLim
       end: fromMinutes(s.end),
       needed: s.program.instructorsNeeded,
       existing: s.existing,
-      drafted: drafted.map(({ e }) => people[e]!.name),
+      drafted: [...s.kept.map((k) => onRoster.get(k.slingUserId)?.name ?? k.name), ...drafted.map(({ e }) => people[e]!.name)],
       short: Math.round(val(s.short)),
     };
   });
@@ -761,6 +851,7 @@ export function solveWeek(input: SchedulerInput, solver: Solver, opts: { timeLim
   }));
 
   placeBreaks(shifts, coverage, settings, teachOf, val, days);
+  findIssues(shifts, input, people, personDays, fixed);
 
   // Per-person summary.
   const employees: EmployeeSummary[] = people.map((e, i) => {
@@ -770,6 +861,7 @@ export function solveWeek(input: SchedulerInput, solver: Solver, opts: { timeLim
     if (e.minHours !== null && total < e.minHours - 0.01) notes.push(`Below minimum hours (${e.minHours})`);
     if (e.preferredHours !== null && total < e.preferredHours - 0.01) notes.push(`Under preferred hours (${e.preferredHours})`);
     if (e.preferredHours !== null && total > e.preferredHours + 0.01) notes.push(`Over preferred hours (${e.preferredHours})`);
+    if (e.maxHours !== null && total > e.maxHours + 0.01) notes.push(`Over maximum hours (${e.maxHours})`);
     if (val(`tl_${i}`) > 0.01) notes.push(`Teaching over their ${e.teachingLimitPct}% limit`);
     const wfhCenter = shifts.some((s) => s.slingUserId === e.slingUserId && s.where === "center" && e.wfhWeekdays.includes(weekday(s.date)));
     if (wfhCenter) notes.push("At the center on a work-from-home day");
@@ -793,9 +885,11 @@ export function solveWeek(input: SchedulerInput, solver: Solver, opts: { timeLim
   });
 
   shifts.sort((a, b) => a.date.localeCompare(b.date) || a.start.localeCompare(b.start) || a.name.localeCompare(b.name));
+  const now = Math.floor(Date.now() / 1000);
   return {
     weekStart: input.dates[0]!,
-    generatedAt: Math.floor(Date.now() / 1000),
+    generatedAt: now,
+    updatedAt: now,
     status: result.Status,
     solveSeconds: +solveSeconds.toFixed(2),
     shifts,
@@ -803,7 +897,46 @@ export function solveWeek(input: SchedulerInput, solver: Solver, opts: { timeLim
     employees,
     programs,
     warnings,
+    choices: {
+      people: input.employees.filter((e) => e.active).map((e) => ({ slingUserId: e.slingUserId, name: e.name })),
+      programs: input.programs.filter((p) => p.active).map((p) => ({ id: p.id, name: p.name })),
+    },
   };
+}
+
+/**
+ * Notes on each shift where it breaks a rule. Drafted shifts follow the rules,
+ * so these come from hand edits, or from kept shifts after the inputs changed.
+ */
+function findIssues(shifts: DraftShift[], input: SchedulerInput, people: Employee[], personDays: PersonDay[][], fixed: Fixed[]): void {
+  const idx = new Map(people.map((e, i) => [e.slingUserId, i]));
+  const min = (e: Employee) => e.minShiftMinutes ?? input.settings.minShiftMinutes;
+  for (const s of shifts) {
+    const i = idx.get(s.slingUserId);
+    if (i === undefined) {
+      s.issues.push("Not on the roster as someone to schedule");
+      continue;
+    }
+    const e = people[i]!;
+    const pd = personDays[i]![input.dates.indexOf(s.date)]!;
+    const start = toMinutes(s.start);
+    const end = toMinutes(s.end);
+    const blocks: number[] = [];
+    for (let t = Math.floor(start / BLOCK) * BLOCK; t < end; t += BLOCK) blocks.push(t);
+    if (blocks.some((t) => pd.timeOff.has(t))) s.issues.push("During approved time off");
+    else if (blocks.some((t) => !pd.available.has(t))) s.issues.push("Outside their availability");
+    const others = [
+      ...fixed.filter((f) => !f.draft).map((f) => ({ id: "", userId: f.userId, date: f.date, start: f.start, end: f.end })),
+      ...shifts.map((o) => ({ id: o.id, userId: o.slingUserId, date: o.date, start: toMinutes(o.start), end: toMinutes(o.end) })),
+    ];
+    if (others.some((o) => o.id !== s.id && o.userId === s.slingUserId && o.date === s.date && overlaps(o, { start, end }))) {
+      s.issues.push("Overlaps another of their shifts");
+    }
+    if (s.where !== "program" && end - start < min(e)) s.issues.push(`Shorter than ${min(e)} minutes`);
+    if (s.where !== "program" && end - start > input.settings.maxShiftMinutes) s.issues.push(`Longer than ${input.settings.maxShiftMinutes} minutes`);
+    if (s.where === "center" && e.wfhWeekdays.includes(weekday(s.date))) s.issues.push("At the center on a work-from-home day");
+    if (s.where === "remote" && !e.canWorkRemote) s.issues.push("Can't work remotely");
+  }
 }
 
 /**
