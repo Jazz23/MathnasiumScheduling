@@ -141,7 +141,7 @@ How that capacity works, from Mathnasium's myMathnasium Center Admin Guide (Octo
   in Radius' Scheduling settings.
 - Pods (Radius calls them groups) are optional sub-capacities where a student works with one
   instructor. Groups don't share capacity. Parents never see pods or instructors, only open times.
-  This center uses pods (confirmed 2026-11-24), and each appointment has a `PodLabel`.
+  This center doesn't use pods (confirmed 2026-11-24), so the app can ignore `PodLabel`.
 - Times with no capacity can't be booked, so they work as drop-in times.
 - The default capacity applies to every future week that hasn't been edited by hand. A week can be
   edited on its own, which is how capacity could follow each week's schedule (open question 27).
@@ -775,6 +775,4 @@ Answered questions are kept, struck through, with their answers.
     really staffed. It would be a second kind of write to Radius, after booking.
 28. ~~Is this center set up as a Scheduling Center (the myMathnasium integrated scheduler), and are
     any pods or groups used in Default capacity?~~ Answered 2026-11-24: it uses myMathnasium's
-    scheduler, and it uses pods. Still to find out: what the center's pods stand for (one per
-    instructor, per level, per time?), which decides whether reading capacity means adding up pods
-    and whether the app would set capacity per pod (question 27).
+    scheduler, and it doesn't use pods, so capacity is just the default capacity rows.
