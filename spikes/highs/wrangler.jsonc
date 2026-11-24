@@ -2,6 +2,6 @@
 	"$schema": "../../node_modules/wrangler/config-schema.json",
 	"name": "highs-spike",
 	"main": "worker.ts",
-	"compatibility_date": "2026-11-20",
-	"limits": { "cpu_ms": 300000 }
+	"compatibility_date": "2026-11-20"
+	// On Workers Paid, add "limits": { "cpu_ms": 300000 } for longer solves. Free rejects the setting.
 }
