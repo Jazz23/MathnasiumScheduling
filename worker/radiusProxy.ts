@@ -18,11 +18,8 @@
 // WebSockets (SignalR) can't be intercepted that way and won't connect.
 
 import type { Env } from "./env";
-import type { HTMLRewriter as HTMLRewriterType } from "@cloudflare/workers-types/index.ts";
 import { getSessionAccount } from "./auth";
 import { RADIUS_ORIGIN, radiusFetch } from "./radius";
-
-declare const HTMLRewriter: typeof HTMLRewriterType;
 
 export const RADIUS_PREFIX = "/radius";
 export const RADIUS_SW_PATH = `${RADIUS_PREFIX}/__proxy-sw.js`;
@@ -82,8 +79,11 @@ function toProxyUrl(value: string): string {
 }
 
 class AttributeRewriter {
-  constructor(private readonly attribute: string) {}
-  element(element: { getAttribute(name: string): string | null; setAttribute(name: string, value: string): unknown }) {
+  private readonly attribute: string;
+  constructor(attribute: string) {
+    this.attribute = attribute;
+  }
+  element(element: Element) {
     const value = element.getAttribute(this.attribute);
     if (value) element.setAttribute(this.attribute, toProxyUrl(value));
   }

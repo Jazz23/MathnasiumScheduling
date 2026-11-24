@@ -1,16 +1,16 @@
-// Cloudflare Worker entry. Static assets (the built React app in dist/) are
+// Cloudflare Worker entry. Static assets (the React app, built by Vite) are
 // served by Workers Static Assets; only /api/*, /radius/* (the Radius
 // proxy) and /sling/* (the Sling proxy) requests reach this handler (see run_worker_first in wrangler.jsonc).
 
-import type { Env } from "./server/env";
-import { handleAuth } from "./server/auth";
-import { handleRadiusProxy } from "./server/radiusProxy";
-import { handleSling } from "./server/sling";
+import type { Env } from "./env";
+import { handleAuth } from "./auth";
+import { handleRadiusProxy } from "./radiusProxy";
+import { handleSling } from "./sling";
 
 export type { Env };
 // Classes the runtime loads by name (see wrangler.jsonc).
-export { AccountLock } from "./server/accountLock";
-export { SlingSignIn } from "./server/slingSignIn";
+export { AccountLock } from "./accountLock";
+export { SlingSignIn } from "./slingSignIn";
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {

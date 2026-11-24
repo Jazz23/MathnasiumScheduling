@@ -21,12 +21,9 @@
 // updates need a reload.
 
 import type { Env } from "./env";
-import type { HTMLRewriter as HTMLRewriterType } from "@cloudflare/workers-types/index.ts";
 import { getSessionAccount } from "./auth";
 import { decryptPassword, encryptPassword } from "./crypto";
 import type { SlingSignInParams } from "./accountLock";
-
-declare const HTMLRewriter: typeof HTMLRewriterType;
 
 const APP_ORIGIN = "https://app.getsling.com";
 const API_ORIGIN = "https://api.getsling.com";
@@ -344,8 +341,11 @@ function headScript(orgId: number | null): string {
 }
 
 class AttributeRewriter {
-  constructor(private readonly attribute: string) {}
-  element(el: { getAttribute(n: string): string | null; setAttribute(n: string, v: string): unknown }) {
+  private readonly attribute: string;
+  constructor(attribute: string) {
+    this.attribute = attribute;
+  }
+  element(el: Element) {
     const value = el.getAttribute(this.attribute);
     if (value) el.setAttribute(this.attribute, toProxyUrl(value));
   }

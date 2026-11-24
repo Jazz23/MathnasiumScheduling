@@ -1,14 +1,20 @@
 # Mathnasium Scheduling
 
-React frontend bundled with Bun, served by a Cloudflare Worker (static assets + `/api/*` routes) backed by D1.
+React app built with Vite, served by a Cloudflare Worker (static assets + `/api/*`, `/radius/*` and `/sling/*` routes) backed by D1. The Vite build and dev server use `@cloudflare/vite-plugin`.
 
 ```bash
-bun install          # install dependencies
-bun run dev          # app with HMR on http://localhost:3000, /api/* proxied to wrangler dev (local D1)
-bun run dev:worker   # wrangler dev only (http://localhost:8787, no HMR)
-bun run deploy       # build + deploy to Cloudflare
-bun check            # type check
+bun install               # install dependencies
+bun run dev               # Vite dev server with HMR; the Worker runs in workerd against the local D1
+bun run build             # type check, then build the app and Worker into dist/
+bun run preview           # build, then preview the production build locally
+bun run deploy            # build + deploy to Cloudflare
+bun run deploy:staging    # build for env.staging + deploy mathnasium-scheduling-staging
+bun run typecheck         # check generated Worker types are current, then tsc -b
+bun run types             # regenerate worker-configuration.d.ts after changing wrangler.jsonc
+bun run lint              # oxlint
 ```
+
+Layout: `src/` is the React app, `worker/` is the Worker, `migrations/` holds D1 migrations. See `docs/ARCHITECTURE.md`.
 
 Database migrations (D1, files in `migrations/`):
 
@@ -20,7 +26,7 @@ bun run db:migrate                # apply to the production database
 
 ## Login with Radius
 
-Radius (radius.mathnasium.com) has no OAuth or refresh tokens, and it can't be embedded in an iframe. So "Log in with Radius" is the app's own form: the Worker signs in to Radius with those credentials, saves the Radius session cookies, and saves the password AES-GCM encrypted in D1. `radiusFetch()` in `src/server/radius.ts` makes requests as the user and signs in again whenever the Radius session expires. "Unlink Radius" deletes everything stored for the account.
+Radius (radius.mathnasium.com) has no OAuth or refresh tokens, and it can't be embedded in an iframe. So "Log in with Radius" is the app's own form: the Worker signs in to Radius with those credentials, saves the Radius session cookies, and saves the password AES-GCM encrypted in D1. `radiusFetch()` in `worker/radius.ts` makes requests as the user and signs in again whenever the Radius session expires. "Unlink Radius" deletes everything stored for the account.
 
 The encryption key is a Worker secret:
 

@@ -1,31 +1,34 @@
 {
-  "name": "bun-react-template",
-  "version": "0.1.0",
-  "private": true,
-  "type": "module",
-  "scripts": {
-    "dev": "bun dev.ts",
-    "dev:worker": "wrangler dev",
-    "build": "rm -rf dist && bun build ./src/index.html --outdir=dist --target=browser --minify --define:process.env.NODE_ENV='\"production\"' --env='BUN_PUBLIC_*'",
-    "typecheck": "wrangler types --include-runtime=false --check && bun check",
-    "types": "wrangler types --include-runtime=false",
-    "deploy": "wrangler deploy",
-    "db:migrate": "wrangler d1 migrations apply mathnasium-scheduling --remote",
-    "db:migrate:local": "wrangler d1 migrations apply mathnasium-scheduling --local",
-    "db:migration:new": "wrangler d1 migrations create mathnasium-scheduling"
-  },
-  "dependencies": {
-    "react": "^19",
-    "react-dom": "^19"
-  },
-  "devDependencies": {
-    "@cloudflare/workers-types": "5.20261119.1",
-    "@types/bun": "latest",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
-    "wrangler": "4.165.0"
-  },
-  "peerDependencies": {
-    "typescript": "^7"
-  }
+	"name": "mathnasium-scheduling",
+	"private": true,
+	"version": "0.0.0",
+	"type": "module",
+	"scripts": {
+		"dev": "vite",
+		"build": "tsc -b && vite build",
+		"lint": "oxlint",
+		"preview": "bun run build && vite preview",
+		"deploy": "bun run build && wrangler deploy",
+		"deploy:staging": "CLOUDFLARE_ENV=staging bun run build && wrangler deploy",
+		"types": "wrangler types",
+		"typecheck": "wrangler types --check && tsc -b",
+		"db:migrate": "wrangler d1 migrations apply mathnasium-scheduling --remote",
+		"db:migrate:local": "wrangler d1 migrations apply mathnasium-scheduling --local",
+		"db:migration:new": "wrangler d1 migrations create mathnasium-scheduling"
+	},
+	"dependencies": {
+		"react": "^19.3.1",
+		"react-dom": "^19.3.1"
+	},
+	"devDependencies": {
+		"@cloudflare/vite-plugin": "^1.70.1",
+		"@types/node": "^26.6.6",
+		"@types/react": "^19.3.0",
+		"@types/react-dom": "^19.3.0",
+		"@vitejs/plugin-react": "^6.1.2",
+		"oxlint": "^1.90.0",
+		"typescript": "~7.0.2",
+		"vite": "^8.3.6",
+		"wrangler": "^4.167.0"
+	}
 }

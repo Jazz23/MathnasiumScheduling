@@ -1,17 +1,12 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "mathnasium-scheduling",
-  "main": "./src/worker.ts",
-  "compatibility_date": "2026-11-19",
+  "main": "./worker/index.ts",
+  "compatibility_date": "2026-11-23",
   "upload_source_maps": true,
-  // Bundles the React frontend into dist/. Runs before `wrangler deploy`, on
-  // `wrangler dev` start, and again whenever a file in src/ changes.
-  "build": {
-    "command": "bun run build",
-    "watch_dir": "src"
-  },
+  // The React app is built by Vite (@cloudflare/vite-plugin), which also sets
+  // the assets directory. Only the paths below reach the Worker first.
   "assets": {
-    "directory": "./dist/",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
     "run_worker_first": ["/api/*", "/radius/*", "/sling/*"]
@@ -46,7 +41,8 @@
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["AccountLock"] }],
 
   "env": {
-    // `wrangler deploy --env staging` deploys mathnasium-scheduling-staging.
+    // Selected at build time: `CLOUDFLARE_ENV=staging bun run build`, then
+    // `wrangler deploy` deploys mathnasium-scheduling-staging.
     "staging": {
       "secrets": {
         "required": ["RADIUS_CREDENTIAL_KEY", "CAPMONSTER_API_KEY"]

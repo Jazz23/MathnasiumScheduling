@@ -18,7 +18,7 @@ or built, record it here and update the plan to match.
 | **The app stores Radius and Sling passwords, encrypted.** | Radius has no refresh tokens, and Sling's token expires. To keep working without asking the director to log in again, the Worker signs in again itself. |
 | **CapMonster solves Sling's login captcha.** | Sling's login API requires a reCAPTCHA token. |
 | **Radius and Sling are shown in the app through same-origin proxies.** | Both refuse to be shown in another site's iframe. Proxying also keeps their cookies and tokens on the server. |
-| **React built with Bun's own tooling**, no framework or separate bundler. | Fewer tools to maintain. |
+| **React built with Vite and `@cloudflare/vite-plugin`**, no framework. Bun is the package manager and script runner. | The plugin runs the Worker in the real Workers runtime during `vite` dev, so one dev server gives hot reload and real bindings on one origin. |
 | **One Durable Object per account (`AccountLock`) runs one sign-in at a time.** | Requests that find an expired login together share one sign-in, instead of each signing in again (for Sling, each paying for a captcha). |
 | **Sling sign-in runs in a Workflow (`SlingSignIn`).** | It waits up to 2 minutes for the captcha. A Workflow step has no wall-clock limit and keeps going if the tab closes. |
 | **Runs on the Workers Free plan until the scheduler needs more CPU.** | Durable Objects and Workflows are on the Free plan. Its 10 ms of CPU and 50 outgoing requests per invocation fit sign-ins and proxying. |
@@ -26,43 +26,43 @@ or built, record it here and update the plan to match.
 ## Overview
 
 ```
-Browser ──> Worker (src/worker.ts)
+Browser ──> Worker (worker/index.ts)
               ├─ /api/auth/*, /api/sling ──> D1 (accounts, sessions, stored logins)
               ├─ /radius/*   ── signed-in proxy ──> radius.mathnasium.com
               ├─ /sling/*    ── proxy ───────────> app.getsling.com
               ├─ /sling/__api/* ── adds token ───> api.getsling.com
-              └─ everything else ──> static assets (dist/, the React app)
+              └─ everything else ──> static assets (the React app)
 
-Sign-ins go through the account's AccountLock (Durable Object, src/server/accountLock.ts):
+Sign-ins go through the account's AccountLock (Durable Object, worker/accountLock.ts):
   Radius: signs in itself
-  Sling:  starts the SlingSignIn Workflow (src/server/slingSignIn.ts), which
+  Sling:  starts the SlingSignIn Workflow (worker/slingSignIn.ts), which
           calls CapMonster (api.capmonster.cloud) to solve the captcha
 ```
 
-Workers Static Assets serves the built app from `dist/`, with single-page-app fallback. Only
+Workers Static Assets serves the built app (`dist/client/`), with single-page-app fallback. Only
 `/api/*`, `/radius/*` and `/sling/*` run the Worker (`run_worker_first` in `wrangler.jsonc`).
 
 ### Routes
 
 | Route | File | What it does |
 | --- | --- | --- |
-| `POST /api/auth/radius` | `src/server/auth.ts` | Log in with Radius. Creates or updates the account and starts an app session. |
-| `DELETE /api/auth/radius` | `src/server/auth.ts` | Unlink Radius: deletes the account, its stored password and cookies, all its sessions and its Sling link. |
-| `GET /api/auth/me` | `src/server/auth.ts` | The signed-in account, or 401. |
-| `POST /api/auth/logout` | `src/server/auth.ts` | Ends this browser's session. Radius stays linked. |
-| `GET`, `POST`, `DELETE /api/sling` | `src/server/sling.ts` | Whether Sling is linked; start linking Sling (202 with the sign-in's ID); unlink Sling, stopping a sign-in that's still running. |
-| `GET /api/sling/sign-in/:id` | `src/server/sling.ts` | Whether a Sling sign-in is pending, done or failed. Only the account's own sign-ins. |
-| `/radius/*` | `src/server/radiusProxy.ts` | Radius pages and requests, made as the signed-in account. |
-| `/sling/*` | `src/server/sling.ts` | Sling's web app files. |
-| `/sling/__api/*` | `src/server/sling.ts` | Sling's API, with the stored token added. |
+| `POST /api/auth/radius` | `worker/auth.ts` | Log in with Radius. Creates or updates the account and starts an app session. |
+| `DELETE /api/auth/radius` | `worker/auth.ts` | Unlink Radius: deletes the account, its stored password and cookies, all its sessions and its Sling link. |
+| `GET /api/auth/me` | `worker/auth.ts` | The signed-in account, or 401. |
+| `POST /api/auth/logout` | `worker/auth.ts` | Ends this browser's session. Radius stays linked. |
+| `GET`, `POST`, `DELETE /api/sling` | `worker/sling.ts` | Whether Sling is linked; start linking Sling (202 with the sign-in's ID); unlink Sling, stopping a sign-in that's still running. |
+| `GET /api/sling/sign-in/:id` | `worker/sling.ts` | Whether a Sling sign-in is pending, done or failed. Only the account's own sign-ins. |
+| `/radius/*` | `worker/radiusProxy.ts` | Radius pages and requests, made as the signed-in account. |
+| `/sling/*` | `worker/sling.ts` | Sling's web app files. |
+| `/sling/__api/*` | `worker/sling.ts` | Sling's API, with the stored token added. |
 | `/radius/__proxy-sw.js`, `/sling/__proxy-sw.js` | the proxy files | Service workers for the embedded views (see below). |
-| `GET /api/db/health` | `src/worker.ts` | Checks D1. The dev server uses it to know the Worker is up. |
+| `GET /api/db/health` | `worker/index.ts` | Checks D1. |
 
 Any other `/api/*` path returns 404 as JSON.
 
 ## Accounts and sessions
 
-**Login with Radius** (`src/server/auth.ts`, `src/server/radius.ts`):
+**Login with Radius** (`worker/auth.ts`, `worker/radius.ts`):
 
 1. The app's own login form sends the Radius username and password to `POST /api/auth/radius`.
 2. The Worker loads Radius' login page (`/Account/Login`) for its anti-forgery token and cookie, then
@@ -79,7 +79,7 @@ Radius answers with a 401 or a redirect to its login page, it asks the account's
 new cookies and retries once. It doesn't follow redirects, and the request body must be replayable
 (not a stream), because it may be sent twice. All Radius access goes through it.
 
-**Sign-in lock** (`src/server/accountLock.ts`): one Durable Object per app account, named by the
+**Sign-in lock** (`worker/accountLock.ts`): one Durable Object per app account, named by the
 account ID, runs its calls one at a time. A caller passes the time it sent the request that was
 turned down. If a sign-in finished after that, the caller gets that result instead of starting
 another. A Radius sign-in decrypts the password, signs in and saves the cookies in the object
@@ -87,7 +87,7 @@ itself. For Sling, see below.
 
 ## Sling link
 
-`src/server/sling.ts`:
+`worker/sling.ts`:
 
 1. The director enters their Sling email and password (`POST /api/sling`). The Worker encrypts the
    password and asks the account's `AccountLock` to start a sign-in with it. The lock stops any
@@ -119,7 +119,7 @@ Sling sits behind Cloudflare's bot protection, which rejects requests without a 
 ## Stored credentials
 
 - Radius and Sling passwords are encrypted with AES-GCM using a 256-bit key, `RADIUS_CREDENTIAL_KEY`
-  (base64). Despite the name, the same key covers Sling. `src/server/crypto.ts` uses only WebCrypto.
+  (base64). Despite the name, the same key covers Sling. `worker/crypto.ts` uses only WebCrypto.
 - Each password gets a random 12-byte IV. The ciphertext is tied to its account (the lowercased
   Radius username, or `sling:<email>`), so it can't be copied onto another row and still decrypt.
 - If the key is lost or changed, stored passwords can't be decrypted, and the director has to log in
@@ -133,7 +133,7 @@ Sling sits behind Cloudflare's bot protection, which rejects requests without a 
 Radius and Sling both send `X-Frame-Options: SAMEORIGIN`, so the app shows them through proxies on
 its own origin.
 
-**Radius** (`src/server/radiusProxy.ts`, shown by `src/RadiusSchedule.tsx`):
+**Radius** (`worker/radiusProxy.ts`, shown by `src/RadiusSchedule.tsx`):
 
 - The Worker fetches each page with `radiusFetch()` and serves it under `/radius/`.
 - HTML responses have `href`, `src` and form `action` attributes rewritten to stay under `/radius/`.
@@ -142,13 +142,13 @@ its own origin.
 - A service worker scoped to `/radius/` catches every other same-origin request a page makes (fetch,
   images, CSS) and prefixes it with `/radius`.
 - If a Radius page navigates to a root-relative URL from a script, the frame lands on the app
-  itself. `src/frontend.tsx` notices that it's inside its own frame and sends it on to `/radius/`.
+  itself. `src/main.tsx` notices that it's inside its own frame and sends it on to `/radius/`.
 - Responses lose `Set-Cookie`, `X-Frame-Options`, content security policy and HSTS headers.
   Redirects are rewritten to stay under `/radius/`. Requests get Radius' own `Origin` and `Referer`,
   because some Radius endpoints check them.
 - Radius' live updates (SignalR websockets) can't be proxied this way and don't connect.
 
-**Sling** (`src/server/sling.ts`, shown by `src/SlingPanel.tsx`):
+**Sling** (`worker/sling.ts`, shown by `src/SlingPanel.tsx`):
 
 - `/sling/*` serves Sling's web app from `app.getsling.com`. Its JavaScript is rewritten to call
   `/sling/__api/` instead of `api.getsling.com`.
@@ -185,28 +185,30 @@ Set them with `wrangler secret put` (add `--env staging` for staging) in product
 deploy fails if one is missing.
 
 **Generated types**: `bun run types` writes `worker-configuration.d.ts` from `wrangler.jsonc`
-(`wrangler types --include-runtime=false`). It's checked in, and `bun run typecheck` fails if it's
-out of date. `src/server/env.ts` re-exports it as `Env`. The runtime types are left out because
-they would clash with Bun's global `Request` and `Response`. Instead, `src/server/cloudflare.d.ts`
-aliases the binding types the generated file names (`D1Database`, `DurableObjectNamespace`,
-`Workflow`, `Fetcher`) from the package's module-style types, and declares the `cloudflare:workers`
-and `cloudflare:workflows` modules.
+(`wrangler types`), including the Workers runtime types. It's checked in, and `bun run typecheck`
+fails if it's out of date. `worker/env.ts` re-exports it as `Env`. TypeScript uses project
+references: `tsconfig.app.json` (the React app in `src/`, DOM types), `tsconfig.worker.json`
+(`worker/`, Workers types only) and `tsconfig.node.json` (`vite.config.ts`), so browser and Workers
+globals never mix.
 
 **Environments**: the top level of `wrangler.jsonc` is production. `env.staging` deploys a separate
 Worker, `mathnasium-scheduling-staging`, with its own D1 database and its own Workflow name
 (Workflow names are unique per Cloudflare account). Bindings aren't inherited, so staging repeats
-them.
+them. With the Vite plugin the environment is chosen at build time with `CLOUDFLARE_ENV`, not with
+`wrangler deploy --env`: `bun run deploy:staging` runs `CLOUDFLARE_ENV=staging vite build`, then
+`wrangler deploy` deploys the config the build wrote.
 
 ## Build and development
 
-- **Build**: `bun build ./src/index.html` bundles the React app into `dist/`. Wrangler runs it before
-  each deploy, and again on file changes during `wrangler dev`.
-- **Dev server** (`dev.ts`, `bun run dev`): Bun serves the app with hot reload on port 3000 and starts
-  `wrangler dev` on port 8787, which runs the real Worker against a local D1 database. Bun forwards
-  `/api/*`, `/radius/*` and `/sling/*` to it, so everything stays on one origin as in production.
-  Wrangler's own page only redirects to port 3000.
-- **Pinned versions**: Wrangler 4.165.0, `@cloudflare/workers-types` 5.20261119.1, compatibility
-  date 2026-11-19.
+- **Build** (`bun run build`): `tsc -b` type checks, then `vite build` writes the React app to
+  `dist/client/` and the bundled Worker, with a generated `wrangler.json`, to
+  `dist/mathnasium_scheduling/`. `wrangler deploy` reads that generated config (it's redirected there
+  by `.wrangler/deploy/config.json`).
+- **Dev server** (`bun run dev`, `vite`): `@cloudflare/vite-plugin` runs the Worker in workerd
+  inside the Vite dev server, against the local D1 database in `.wrangler/`, alongside the React app
+  with hot reload. `/api/*`, `/radius/*` and `/sling/*` go to the Worker, as in production
+  (`run_worker_first`). Secrets come from `.dev.vars`.
+- **Pinned versions**: see `package.json`; compatibility date 2026-11-23.
 
 ## Known limitations
 

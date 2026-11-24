@@ -414,11 +414,11 @@ The Worker and the Workflows both use:
    Claude API       reads parents' messages and writes replies (booking assistant)
 ```
 
-- **Integrations**: `src/server/radius.ts` and `src/server/sling.ts` grow typed functions for the data
+- **Integrations**: `worker/radius.ts` and `worker/sling.ts` grow typed functions for the data
   the scheduler needs (appointments and whether each is online, ratio and visits; users, positions,
   locations, availability, time off, shifts). Nothing else talks to Radius or Sling directly, so when either one changes, only these
   files change.
-- **Scheduler**: a pure module (planned as `src/server/scheduler/`) with no network or database
+- **Scheduler**: a pure module (planned as `worker/scheduler/`) with no network or database
   access. It takes demand, employees, rules and locked shifts, and returns shifts and a report. That
   keeps it easy to test and lets it run in a request, a background job or locally.
 - **Predictor**: also pure, next to the scheduler. It takes visit history, appointments and marked
@@ -498,7 +498,6 @@ record each one in `docs/ARCHITECTURE.md` once it's made.
 - Email Service onboarding: the daily quota for new accounts, and what the sending domain needs.
 - Whether the pinned Wrangler version can schedule Workflows directly (a newer feature), or whether a
   Cron Trigger has to start them.
-- Whether generated Workers types and Bun's types work together under `bun check`.
 
 ### Radius endpoints found so far
 

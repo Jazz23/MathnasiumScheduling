@@ -1,9 +1,4 @@
-/**
- * This file is the entry point for the React app, it sets up the root
- * element and renders the App component to the DOM.
- *
- * It is included in `src/index.html`.
- */
+// Entry point for the React app, loaded by index.html.
 
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
@@ -23,17 +18,8 @@ if (framedByThisApp() && !location.pathname.startsWith("/radius/")) {
   location.replace("/radius" + location.pathname + location.search + location.hash);
 }
 
-const elem = document.getElementById("root")!;
-const app = (
+createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <App />
-  </StrictMode>
+  </StrictMode>,
 );
-
-if (import.meta.hot) {
-  // With hot module replacement, reuse the same root across updates.
-  const root = (import.meta.hot.data.root ??= createRoot(elem));
-  root.render(app);
-} else {
-  createRoot(elem).render(app);
-}
