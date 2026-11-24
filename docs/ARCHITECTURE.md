@@ -10,7 +10,7 @@ or built, record it here and update the plan to match.
 
 | Decision | Why |
 | --- | --- |
-| **Fully serverless on AWS** (moved from Cloudflare on 2026-11-24): CloudFront serves the app from S3 and sends the API and proxies to a Lambda; DynamoDB stores the data. Deployed with the AWS CDK in TypeScript, to us-east-1. | No server to maintain. Lambda has no CPU limit like Workers' (the scheduler needs seconds of CPU, see `spikes/highs/`), and runs up to 15 minutes. |
+| **Fully serverless on AWS** (moved from Cloudflare on 2026-11-24): CloudFront serves the app from S3 and sends the API and proxies to a Lambda; DynamoDB stores the data. Deployed with the AWS CDK in TypeScript, to us-east-2 (the only region the AWS account allows). | No server to maintain. Lambda has no CPU limit like Workers' (the scheduler needs seconds of CPU, see `spikes/highs/`), and runs up to 15 minutes. |
 | **Only the director uses the app.** Employees keep using Sling, and parents never use the app. | Employees already request time off in Sling and see their shifts there. One user keeps the app simple. |
 | **One center.** Settings, roster and linked accounts aren't split by center. | The app is for this center only (decided 2026-11-24). |
 | **Radius and Sling stay the sources of truth.** Appointments, the student-to-instructor ratio, attendance history and sessions left this month come from Radius. Time off and the published schedule come from Sling. The app stores only what neither one has. | No second copy of data to keep in sync, and the center keeps working the way it does today. |

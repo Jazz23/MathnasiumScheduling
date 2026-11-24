@@ -33,7 +33,7 @@ Or point `.env.local` at a real table (staging's) with your AWS credentials inst
 
 ```bash
 aws configure                                               # or AWS_PROFILE=...
-bunx cdk bootstrap aws://<account-id>/us-east-1             # once per account and region
+bunx cdk bootstrap aws://<account-id>/us-east-2             # once per account and region
 aws ssm put-parameter --type SecureString --name /mathnasium-scheduling/prod/RADIUS_CREDENTIAL_KEY --value "$(openssl rand -base64 32)"
 aws ssm put-parameter --type SecureString --name /mathnasium-scheduling/prod/CAPMONSTER_API_KEY --value <key>
 bun run deploy                                              # prints the CloudFront URL

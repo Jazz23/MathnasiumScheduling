@@ -10,6 +10,6 @@ if (!/^[a-z][a-z0-9-]*$/.test(stage)) throw new Error(`Bad stage name: ${stage}`
 
 new AppStack(app, `MathnasiumScheduling-${stage}`, {
   stage,
-  env: { account: process.env.CDK_DEFAULT_ACCOUNT, region: "us-east-1" },
+  env: { account: process.env.CDK_DEFAULT_ACCOUNT, region: "us-east-2" },
   tags: { app: "mathnasium-scheduling", stage },
 });
