@@ -24,8 +24,9 @@ where it stays unpublished until the director publishes it there.
 As a stretch goal, a booking assistant answers parents' appointment requests by email and text: it
 checks the schedule, books a time if there's room, and replies.
 
-Everything runs serverless on Cloudflare: a Worker for the web app and API, Workflows for background
-jobs, Durable Objects to coordinate sign-ins, and D1 for storage. There is no server to maintain.
+Everything runs serverless on AWS: CloudFront and S3 for the web app, Lambda for the API and
+background jobs, and DynamoDB for storage and for coordinating sign-ins. There is no server to
+maintain. (Moved from Cloudflare on 2026-11-24; see `docs/ARCHITECTURE.md`.)
 
 ## Users
 
@@ -79,8 +80,8 @@ text.
 
 ## What exists today
 
-Login with Radius, linking Sling, the Radius and Sling views embedded in the app, and the Cloudflare
-Worker with D1. `docs/ARCHITECTURE.md` describes how they work, along with the decisions made so
+Login with Radius, linking Sling, the Radius and Sling views embedded in the app, and the AWS stack
+(CloudFront, Lambda, DynamoDB) deployed with the CDK. `docs/ARCHITECTURE.md` describes how they work, along with the decisions made so
 far.
 
 This gives the Worker signed-in access to both Radius and Sling, which every feature below builds on.
@@ -324,10 +325,10 @@ Builds a draft from the demand, the employees' availability and preferences, and
 
 **Approach (proposed 2026-11-24):** an integer program solved with HiGHS (npm `highs`), instead of
 starting with a greedy heuristic. A test on a synthetic week (`spikes/highs/`) solved it to the
-optimum in about a second, in the Workers runtime, using 44 MB. Shifts have to be written in the
-compact form (working or not per person and block, plus where each shift starts): listing every
-possible shift went over Workers' 128 MB. It runs in a Workflow step, so it has to fit in up to 5
-minutes of CPU and 128 MB of memory. A greedy heuristic stays the fallback.
+optimum in about a second, in the Workers runtime, using 44 MB. Shifts are written in the compact
+form (working or not per person and block, plus where each shift starts): listing every possible
+shift took 230–270 MB and several seconds. On Lambda the limits are 15 minutes and up to 10 GB, so
+either form fits; the compact one is still faster. A greedy heuristic stays the fallback.
 
 ### 7. Review and edit
 
@@ -361,14 +362,14 @@ minutes of CPU and 128 MB of memory. A greedy heuristic stays the fallback.
 
 ### 9. Automation
 
-- **Scheduled runs** (Cloudflare Cron Triggers): for example, generate next week's draft every
+- **Scheduled runs** (EventBridge Scheduler): for example, generate next week's draft every
   Wednesday and notify the director that it's ready for review, so it can be in Sling by Friday,
   3 days before the week starts.
 - **Change detection**: keep re-reading Radius after a schedule is published. If new or cancelled
   appointments open a coverage gap or a large surplus, alert the director and suggest a fix (for
   example, an available employee who is under their preferred hours).
 - **Background jobs**: anything slow (a Sling sign-in can take a minute because of the captcha;
-  generating a schedule may be CPU-heavy) runs as a Cloudflare Workflow instead of inside a web
+  generating a schedule may be CPU-heavy) runs in a Lambda of its own instead of inside a web
   request. See "Planned architecture".
 - **Notifications**: to the director only (draft ready, coverage gap, employees missing
   availability). Employees hear about their shifts from Sling.
@@ -389,10 +390,9 @@ schedule, books the appointment in Radius if there's room, and replies. When a p
 Parents can already book themselves in Mathnasium's parent app (myMathnasium). The bot is for
 parents who email or text instead.
 
-**Flow** (one Workflow per incoming message):
+**Flow** (one background job per incoming message):
 
-1. **Receive**: emails arrive through Cloudflare Email Routing, which hands each message to the
-   Worker. Texts arrive from an SMS provider (for example Twilio) as a webhook.
+1. **Receive**: emails arrive through Amazon SES receiving, which hands each message to a Lambda. Texts arrive from an SMS provider (for example Twilio) as a webhook.
 2. **Identify**: match the sender's email address or phone number to a family in Radius. Messages
    from unknown senders go to the director.
 3. **Understand**: Claude reads the message and returns a structured request: what the parent wants
@@ -481,107 +481,89 @@ No employees are minors, so the app doesn't need labor rules for minors.
 ## Planned architecture
 
 ```
-Browser (React app, static assets) ── /api/* ──┐
-Parents' emails (Email Routing) ───────────────┤
-Parents' texts (SMS provider webhook) ─────────┼──> Worker
-Cron Triggers ─────────────────────────────────┘      │ starts
-                                                      ▼
-        Workflows: weekly run, nightly Radius sync, Sling sign-in, booking requests
+Browser ──> CloudFront ──┬─ React app ──> S3
+                         └─ /api/* ──┐
+Parents' emails (SES receiving) ─────┤
+Parents' texts (SMS provider webhook)┼──> Lambda (API) ── starts ──> background Lambdas:
+EventBridge Scheduler ───────────────┘                    weekly run, nightly Radius sync,
+                                                          Sling sign-in, booking requests
 
-The Worker and the Workflows both use:
-   D1               settings, roster details, visits, drafts, Sling shift IDs, booking log
-   Durable Objects  one per linked account: sign-in lock and current token
-   Radius           appointments, ratio, sign-in/out history (read); appointments (write, booking only)
-   Sling            roster, time off (read); shifts (write, unpublished)
-   Claude API       reads parents' messages and writes replies (booking assistant)
+The API and the background Lambdas all use:
+   DynamoDB    settings, roster details, visits, drafts, Sling shift IDs, booking log,
+               sign-in leases and sign-in state
+   Radius      appointments, ratio, sign-in/out history (read); appointments (write, booking only)
+   Sling       roster, time off (read); shifts (write, unpublished)
+   Claude API  reads parents' messages and writes replies (booking assistant)
 ```
 
-- **Integrations**: `worker/radius.ts` and `worker/sling.ts` grow typed functions for the data
+- **Integrations**: `server/radiusData.ts` and `server/slingData.ts` grow typed functions for the data
   the scheduler needs (appointments and whether each is online, ratio and visits; users, positions,
   locations, time off, shifts). Nothing else talks to Radius or Sling directly, so when either one changes, only these
   files change.
-- **Scheduler**: a pure module (planned as `worker/scheduler/`) with no network or database
+- **Scheduler**: a pure module (planned as `server/scheduler/`) with no network or database
   access. It takes demand, employees, rules and locked shifts, and returns shifts and a report. That
   keeps it easy to test and lets it run in a request, a background job or locally.
 - **Predictor**: also pure, next to the scheduler. It takes visit history, appointments and marked
   dates, and returns expected students per time block. Its output is the scheduler's demand input.
-- **Jobs**: background work runs in Workflows as the director's linked Radius and Sling accounts,
-  using the credentials already stored.
-- **Storage (tentative)**: tables for center settings, locations and school programs, roster details
+- **Jobs**: background work runs in Lambdas invoked asynchronously, as the director's linked Radius
+  and Sling accounts, using the credentials already stored. Each job records its state in DynamoDB,
+  like the Sling sign-in does.
+- **Storage (tentative)**: items for center settings, locations and school programs, roster details
   (roles, levels, teaching limits, preferred programs, remote work, work-from-home days, hour
   preferences, availability), student visits, attendance
   overrides and marked dates, schedule runs, draft shifts, and the mapping from draft shifts to Sling
   shift IDs. Time off stays in Sling. Each schedule run saves a copy of the inputs it
   used, so a draft can be explained later even after Sling or Radius change.
 
-### Cloudflare building blocks
+### AWS building blocks
 
-Researched 2026-11-23 against developers.cloudflare.com. Recommendations, not final decisions:
-record each one in `docs/ARCHITECTURE.md` once it's made.
+Proposed 2026-11-24 with the move to AWS. Recommendations, not final decisions, except where
+marked built: record each one in `docs/ARCHITECTURE.md` once it's made.
 
 | Work | Runs on | Why |
 | --- | --- | --- |
-| Web app and `/api/*` | Worker with Static Assets (as today) | Already in place. |
-| Weekly run: read Radius and Sling, predict, generate, save the draft, notify | Workflow, started by a Cron Trigger | Each step is retried and its result saved, so a failure partway through resumes instead of starting over. A fixed instance ID per week (for example `weekly-2026-W48`) means a cron that fires twice can't run the week twice. |
-| Nightly Radius sync (visit history, appointment changes) | Workflow, one step per page of results | Each step writes its rows to D1 and passes on only where to continue, which keeps step results small. |
-| Sling sign-in (captcha wait of up to 2 minutes) | Workflow step | Steps have no wall-clock limit. The captcha solve and the login go in the same step, because a solved captcha expires quickly. Linking Sling from the UI starts the Workflow and the page polls for the result. Built 2026-11-23. |
-| One sign-in at a time per linked account | Durable Object per account, holding the lock | Two jobs that find an expired token at the same time share one sign-in instead of solving two captchas. It also records the running sign-in, in case the object is restarted mid-sign-in. Built 2026-11-23; the token stays in D1. |
-| Schedule generation | Pure TypeScript in a Workflow step, with a raised CPU limit | A step can use up to 5 minutes of CPU. |
-| Notifications to the director | Email through Cloudflare Email Service (`send_email` binding) | Still in beta and needs a sending domain. The fallback is a transactional email API (Resend, Postmark) called with `fetch`. |
-| Parent emails (booking assistant) | Cloudflare Email Routing, which passes each message to the Worker's `email` handler. The Worker starts a booking Workflow. | Email intake without a server. Needs a domain whose email runs through Cloudflare. The center's current address can forward booking emails to it. |
-| Parent texts (booking assistant) | An SMS provider (for example Twilio) calling a Worker webhook | Cloudflare doesn't send or receive texts itself. |
-| Director approval of a booking | The booking Workflow pauses until the app sends it the director's decision | No polling, and nothing runs while it waits. |
-| Reading parents' messages and writing replies | Claude API (Claude Opus 5.5) through the official TypeScript SDK, called from a Workflow step | Each model call is a retried step, so a temporary API error doesn't lose the message. |
-| Queues | Not used | Workflows cover the background work and save each step's result; Queues would add nothing. |
+| Web app and `/api/*` | CloudFront, S3 and a Lambda function URL | Built 2026-11-24. |
+| Sling sign-in (captcha wait of up to 2 minutes) | A Lambda invoked asynchronously, its state in DynamoDB | Built 2026-11-24. Runs up to 15 minutes, and keeps going if the tab closes. |
+| One sign-in at a time per linked account | DynamoDB conditional writes | Built 2026-11-24: a lease for Radius, a compare-and-swap of the latest sign-in for Sling. |
+| Weekly run: read Radius and Sling, predict, generate, save the draft, notify | A Lambda started by EventBridge Scheduler, or a Step Functions state machine if it needs resuming partway | EventBridge Scheduler takes a time zone, so "Wednesday 9 AM Pacific" needs no hourly check. A run record keyed by week (for example `weekly-2026-W48`), written with a condition, stops a doubled schedule from running the week twice. |
+| Nightly Radius sync (visit history, appointment changes) | A Lambda on a schedule, paging through results | 15 minutes per invocation is plenty for one center; it can save where it got to and invoke itself again if not. |
+| Schedule generation | Pure TypeScript in a Lambda | Up to 15 minutes and 10 GB. |
+| Notifications to the director | Amazon SES | Needs a verified sending domain or address. |
+| Parent emails (booking assistant) | SES receiving, which passes each message to a Lambda | Needs a domain whose MX records point at SES. The center's current address can forward booking emails to it. |
+| Parent texts (booking assistant) | An SMS provider (for example Twilio) calling an API webhook, or AWS End User Messaging | Either way the number has to be registered (A2P 10DLC). |
+| Director approval of a booking | The booking job's state in DynamoDB; the app's approval starts the next step | Nothing runs while it waits. Step Functions' task tokens are the alternative. |
+| Reading parents' messages and writing replies | Claude API (Claude Opus 5.5) through the official TypeScript SDK | Retry model calls on temporary errors. |
 
-**Limits that shape the design** (Workers Paid plan):
+**Limits that shape the design:**
 
 | Limit | Value |
 | --- | --- |
-| CPU per request | 30 s by default, up to 5 min (`limits.cpu_ms`) |
-| Workflow step | 30 s to 5 min of CPU, no wall-clock limit, result up to 1 MiB, retried 5 times by default |
-| Memory | 128 MB per isolate, including WebAssembly |
-| Cron Triggers | UTC only |
-| Work after a response (`waitUntil`) | 30 s |
-| Outgoing requests | 10,000 per invocation |
-| D1 | 10 GB per database; 100 bound parameters per query; 1,000 queries per invocation (a `batch()` counts as one) |
+| Lambda | 15 minutes per invocation, 128 MB to 10 GB memory (CPU scales with memory) |
+| Function URL response | Streamed, so no 6 MB limit on proxied pages |
+| CloudFront | 60 s to the first byte from the API by default (up to 180 s by request to AWS) |
+| DynamoDB | 400 KB per item, 100 items per transaction |
 
 **Practices:**
 
-- **Plan**: Workers Paid ($5/month) is needed from phase 3. The Free plan already includes Durable
-  Objects and Workflows, so phases 1 and 2 can run on it. Its limits are 10 ms of CPU per request or
-  Workflow step (waiting on the network doesn't count) and 50 outgoing requests per invocation. Big
-  reads, like the first import of visit history, are split into Workflow steps so each step stays
-  within those limits. The scheduler needs more CPU than that. One center should stay within Paid's
-  included usage.
-  Other costs: CapMonster for each Sling sign-in, and a domain for sending email.
-- **Time zone**: Cron Triggers run on UTC, but the center runs on Pacific time with daylight saving.
-  Fire hourly, check the local hour in code, and rely on the weekly instance ID to prevent duplicate
-  runs.
-- **Types**: done, see `docs/ARCHITECTURE.md`. Still to do: run `bun run typecheck` in CI.
-- **Environments**: staging is set up in `wrangler.jsonc` (see `docs/ARCHITECTURE.md`), but its D1
-  database isn't created yet: `wrangler d1 create mathnasium-scheduling-staging`, then put its ID in
-  `wrangler.jsonc`.
-- **Deploys**: Workers Builds (Cloudflare's CI, which has Bun) runs the tests, applies D1 migrations,
-  then deploys.
-- **Testing**: `bun test` for the pure scheduler and predictor. Add Cloudflare's Vitest integration
-  only for code that needs D1, Workflows or Durable Objects to run.
-- **D1**: schema and indexes in migrations. Use `batch()` for writes that must succeed or fail
-  together (it runs as one transaction). Split bulk inserts, like the first import of visit history,
-  to stay under 100 bound parameters per query.
-- **Backups**: D1 Time Travel restores the database to any minute in the last 30 days. For longer,
-  export to R2 on a schedule.
-- **Secrets**: keep `wrangler secret put`. Cloudflare's Secrets Store is still in beta.
+- **Cost**: one center stays within or near the free tiers of Lambda, DynamoDB (on-demand) and
+  CloudFront. Other costs: CapMonster for each Sling sign-in, and a domain for sending email.
+- **Time zone**: EventBridge Scheduler takes the center's time zone, so schedules follow daylight
+  saving.
+- **Types**: `bun run typecheck` checks the app, server and infrastructure. Still to do: run it in CI.
+- **Environments**: one CDK stack per stage, `prod` and `staging` (see `docs/ARCHITECTURE.md`).
+- **Deploys**: `bun run deploy` from a machine with AWS credentials. Still to do: CI (GitHub Actions
+  with an OIDC role) that runs the tests, then deploys.
+- **Testing**: `bun test` for the pure scheduler and predictor. DynamoDB Local for code that needs
+  the table.
+- **Backups**: the table has point-in-time recovery (any second in the last 35 days).
+- **Secrets**: SSM Parameter Store SecureStrings, read by the Lambdas at start-up.
 
 **To verify early:**
 
 - ~~Whether a WebAssembly solver (for example HiGHS) runs in Workers and solves a real week within
   the limits.~~ Tested 2026-11-24 in local workerd (see `spikes/highs/README.md`): yes, about a
-  second and 44 MB for a synthetic week. Still to check in a deployed Worker, where the CPU and
-  memory limits apply.
-- Email Service onboarding: the daily quota for new accounts, and what the sending domain needs.
-- Whether the pinned Wrangler version can schedule Workflows directly (a newer feature), or whether a
-  Cron Trigger has to start them.
+  second and 44 MB for a synthetic week. On Lambda there's no CPU limit to worry about.
+- SES onboarding: leaving the sandbox, and what the sending domain needs.
 
 ### Radius endpoints found so far
 
@@ -605,9 +587,9 @@ NeemaJ/MathnasiumCalendarExpander). The ones marked confirmed were called while 
 
 | Path | What it has | Use |
 | --- | --- | --- |
-| `POST /AppointmentManagement/GetAppointments` (confirmed, used by `worker/radiusData.ts`) | Appointments for a date range. Body (form-encoded, with `X-Requested-With: XMLHttpRequest`): `__RequestVerificationToken` (any page's hidden input), `sort`, `page`, `pageSize` (1000 works; a week is about 60–100), `group`, `filter` (all empty), `startDate` and `endDate` as `yyyy-MM-dd`, `appointmentDateType=0` (by appointment date), `isSearchAction=true`; optional filters `deliveryMethod` = `online` or `in_center`, `sessionTypes`, `gradeRanges`, `sessionStatuses`. No center ID needed. Records also have `AppointmentDateString` (`11/30/2026`) and `AppointmentTimeString` (`1:30 PM`) in center time, but no appointment or enrollment ID. Each has student ID, date, time, `SessionDuration` in minutes, `SessionType` (Standard, HighSchool, Great Foundations, Private, or the membership name), `SessionStatus` (Scheduled, Attended, Drop-In, Cancelled, Late cancelled, No show), `DeliveryMethod` ("In-Center" or "Online"), `Grade` ("Pre K", "K", "1"–"12", "College") and `PodLabel`. | Booked demand (feature 4), unbooked visits and no-shows (feature 5). |
+| `POST /AppointmentManagement/GetAppointments` (confirmed, used by `server/radiusData.ts`) | Appointments for a date range. Body (form-encoded, with `X-Requested-With: XMLHttpRequest`): `__RequestVerificationToken` (any page's hidden input), `sort`, `page`, `pageSize` (1000 works; a week is about 60–100), `group`, `filter` (all empty), `startDate` and `endDate` as `yyyy-MM-dd`, `appointmentDateType=0` (by appointment date), `isSearchAction=true`; optional filters `deliveryMethod` = `online` or `in_center`, `sessionTypes`, `gradeRanges`, `sessionStatuses`. No center ID needed. Records also have `AppointmentDateString` (`11/30/2026`) and `AppointmentTimeString` (`1:30 PM`) in center time, but no appointment or enrollment ID. Each has student ID, date, time, `SessionDuration` in minutes, `SessionType` (Standard, HighSchool, Great Foundations, Private, or the membership name), `SessionStatus` (Scheduled, Attended, Drop-In, Cancelled, Late cancelled, No show), `DeliveryMethod` ("In-Center" or "Online"), `Grade` ("Pre K", "K", "1"–"12", "College") and `PodLabel`. | Booked demand (feature 4), unbooked visits and no-shows (feature 5). |
 | `GET /Scheduling/CalendarData?centerKey=3600\|False\|False&date=yyyy-MM-dd` (confirmed) | One day of the scheduling calendar. `CalendarItems`: each appointment's start and end time, `SessionType`, `DeliveryType` (`in_center`), status and pod. `Seats`: for each 15-minute slot, seats booked in-center and online and seats still free. Also `CalendarStartTime`/`CalendarEndTime` (the day's opening hours, e.g. `13:00`–`18:00`), `MaxPhysicalSeats`, `MaxOnlineSeats` and `SchedulingIntervalMinutes` (30). Unlike Appointment Management, each item has `AppointmentId`, `EnrollmentId`, `IsRecurring`, `RecurrenceEndDate` and `EnrollmentTypeDescription`: the way to spot recurring appointments from ended enrollments. | Booked demand for one day. Radius' free seats for the booking assistant. |
-| `/Membership/CenterSettings/{centerId}` (confirmed, a page, used by `worker/radiusData.ts`) | The center's levels, embedded in the page as `radius.utilities.levels.push({...});` calls, one per level: name, first and last grade (Pre K = 13, K = 14), `InCenterRatio`, `OnlineRatio` and `SessionTypeId`. | The ratio and the grade-to-level mapping (features 1 and 4). |
+| `/Membership/CenterSettings/{centerId}` (confirmed, a page, used by `server/radiusData.ts`) | The center's levels, embedded in the page as `radius.utilities.levels.push({...});` calls, one per level: name, first and last grade (Pre K = 13, K = 14), `InCenterRatio`, `OnlineRatio` and `SessionTypeId`. | The ratio and the grade-to-level mapping (features 1 and 4). |
 | `GET /CenterAvailability/GetDefaultCapacity?centerId=&isVirtual=false` (confirmed) | Radius' booking capacity: maximum physical and online seats, and groups of days and hours with a number of instructors per session type. | Comparing Radius' capacity with the schedule (feature 1). |
 | `POST /StudentAttendanceReport/StudentAttendanceReport_Read` (confirmed) | The Student Attendance Report's visits: one row per visit with student ID, enrollment ID, date, arrival, departure, `DurationInMinutes`, `Delivery` ("In-Center" or "Hybrid") and `DeliveryText` ("In-Center" or "@home"), membership type, `SessionsPerMonth` and `SessionsRemaining`. Body: `start` and `end` as `MM/dd/yyyy 12:00:00 AM`, `centerId`, `schoolPartnership=2` (all), and empty `membershipTypeList`, `selectStudent`, `delivery` and `ctrIds`. No instructor. | Visit history (feature 5). |
 | `POST /StudentAttendanceMonthlyReport/StudentAttendanceMonthlyReport_Read` | The same report's month-by-month summary per student. Same parameters, not called yet. | Not needed yet. |
@@ -657,14 +639,14 @@ records let its accuracy be checked against past weeks right away.
 
 | Phase | Scope | Status |
 | --- | --- | --- |
-| 0. Foundations | Login with Radius, link Sling, embedded views, Cloudflare + D1 setup | Done |
-| 1. Read the data | Groundwork: generated types, staging environment, a Durable Object sign-in lock per account, Sling sign-in moved into a Workflow. Then read Radius appointments (with student levels, and whether each is online) and the ratio, and the Sling roster, locations, time off and existing shifts. Show booked demand per time block in the app. | Built 2026-11-24 (staging still needs its D1 database). Not yet: flagging appointments left over from ended enrollments. |
+| 0. Foundations | Login with Radius, link Sling, embedded views, Cloudflare + D1 setup, then moved to AWS (Lambda, DynamoDB, CDK) on 2026-11-24 | Done |
+| 1. Read the data | Groundwork: generated types, staging environment, a Durable Object sign-in lock per account, Sling sign-in moved into a Workflow. Then read Radius appointments (with student levels, and whether each is online) and the ratio, and the Sling roster, locations, time off and existing shifts. Show booked demand per time block in the app. | Built 2026-11-24. Not yet: flagging appointments left over from ended enrollments. |
 | 2. Setup | Center setup (hours, presence rules, school programs, the Remote location). Roster details: roles, levels, teaching limits, preferred programs, remote work, work-from-home days, hour preferences. Availability for each employee, suggested from past Sling shifts. | Built 2026-11-24 |
-| 3. Generate drafts | Switch to Workers Paid for the scheduler's CPU time. Scheduler v1 (heuristic) with the coverage report. No publishing yet. | Planned |
+| 3. Generate drafts | Scheduler v1 (heuristic) with the coverage report. No publishing yet. | Planned |
 | 4. Review and edit | Calendar view of the draft, manual edits, locking, regenerate around locks. | Planned |
 | 5. Publish | Create, update and remove the app's shifts in Sling. | Planned |
 | 6. Predict attendance | Read students' sign-in/out history, learn unbooked students' patterns, show booked vs. predicted demand, director overrides, accuracy checks against past weeks. | Planned |
-| 7. Automation | Weekly run and nightly sync as Workflows on Cron Triggers, change detection, email to the director. | Planned |
+| 7. Automation | Weekly run and nightly sync as Lambdas on EventBridge Scheduler, change detection, email to the director. | Planned |
 | 8. History | Stored history, reports, longer-term prediction patterns, better solver if needed. | Planned |
 | 9. Booking assistant (stretch) | Email first, with the director approving every booking and reply. Then automatic handling of simple requests from known parents. Then texts. | Planned |
 
@@ -676,8 +658,8 @@ records let its accuracy be checked against past weeks right away.
 - **Terms of service**: check that Radius' and Sling's terms allow automated access like this.
 - **Sling sign-in cost**: every Sling sign-in costs a CapMonster captcha solve and up to a minute.
   Reuse the token and sign in again only when it expires.
-- **Workers limits**: the scheduler has to fit in one Workflow step (up to 5 minutes of CPU, 128 MB).
-  Test early with a realistic week (all employees, all appointments).
+- **Lambda limits**: the scheduler has to finish within 15 minutes. Test early with a realistic week
+  (all employees, all appointments).
 - **Stored credentials**: Radius and Sling passwords are stored encrypted under one key. Anyone with
   that key and the database can read them.
 - **Late changes**: appointments booked or cancelled after publishing make the schedule wrong. Change
@@ -731,7 +713,8 @@ Answered questions are kept, struck through, with their answers.
     Workers? Partly answered 2026-11-24: HiGHS runs in Workers and solves a synthetic week in about a
     second (feature 6, `spikes/highs/`). Deployed on the Free plan, it deploys but the solve is
     stopped at Free's 10 ms of CPU, confirming phase 3 needs Workers Paid. Still open: a deployed
-    run on Paid, and choosing it. The week is small: about 8 employees, 6 open days of roughly 28 15-minute blocks, and
+    run on Paid, and choosing it. Since 2026-11-24 the app is on Lambda, where CPU time isn't
+    limited this way; still open is choosing HiGHS. The week is small: about 8 employees, 6 open days of roughly 28 15-minute blocks, and
     3 places to work. The hard part is how the rules interact (a supervisor and two people on site,
     levels, Carol's teaching limit, minimum shift lengths, locked shifts, preferred hours). A greedy
     heuristic fills one block at a time and can paint itself into a corner; it needs repair passes

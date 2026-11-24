@@ -1,5 +1,5 @@
-// Calls to the Worker's /api routes, and the shapes they return. The Worker
-// owns these shapes (worker/*.ts); keep the two in step.
+// Calls to the server's /api routes, and the shapes they return. The server
+// owns these shapes (server/*.ts); keep the two in step.
 
 export async function api<T>(path: string, init?: { method?: string; body?: unknown }): Promise<T> {
   const res = await fetch(path, {

@@ -1,5 +1,5 @@
 // AES-GCM encryption of stored Radius passwords, plus session token helpers.
-// Uses only WebCrypto, which the Workers runtime provides.
+// Uses only WebCrypto (globalThis.crypto in Node).
 
 function toBase64(bytes: Uint8Array): string {
   let binary = "";

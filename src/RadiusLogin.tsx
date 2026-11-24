@@ -17,7 +17,7 @@ type TabId = (typeof TABS)[number]["id"];
 type Status = { state: "loading" } | { state: "signed-out" } | { state: "signed-in"; username: string };
 
 // "Login with Radius". Radius can't be embedded in an iframe, so this is our
-// own form; the Worker signs in to Radius with these credentials and keeps
+// own form; the server signs in to Radius with these credentials and keeps
 // them (encrypted) so the app can keep acting on the user's account.
 export function RadiusLogin() {
   const [status, setStatus] = useState<Status>({ state: "loading" });

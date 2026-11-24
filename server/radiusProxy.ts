@@ -2,7 +2,7 @@
 // Radius pages (like the scheduling calendar) in an iframe.
 //
 // Radius sends X-Frame-Options: SAMEORIGIN, so it can't be iframed directly.
-// Instead the Worker fetches each page as the signed-in user (radiusFetch,
+// Instead the server fetches each page as the signed-in user (radiusFetch,
 // with the stored session cookies, signing in again when they expire) and
 // serves it under /radius/. Radius' cookies never reach the browser.
 //
@@ -16,12 +16,13 @@
 //     (XHR, fetch, images, CSS url()) and prefixes /radius. Synchronous XHRs
 //     bypass service workers, so pages also get XMLHttpRequest.open patched.
 // WebSockets (SignalR) can't be intercepted that way: they arrive at
-// /signalr/*, where the Worker turns them down (worker/index.ts) and SignalR
+// /signalr/*, where the server turns them down (server/app.ts) and SignalR
 // falls back to long polling through the proxy.
 
 import type { Env } from "./env";
 import { getSessionAccount } from "./auth";
 import { RADIUS_ORIGIN, radiusFetch } from "./radius";
+import { rewriteHtml } from "./html";
 
 export const RADIUS_PREFIX = "/radius";
 export const RADIUS_SW_PATH = `${RADIUS_PREFIX}/__proxy-sw.js`;
@@ -56,7 +57,8 @@ self.addEventListener("fetch", (event) => {
 // Request headers that describe the browser's connection to this app, not
 // a request Radius should see.
 const DROP_REQUEST_HEADERS = ["cookie", "host", "origin", "referer", "connection", "content-length", "accept-encoding"];
-const DROP_REQUEST_PREFIXES = ["sec-", "cf-", "x-forwarded-", "x-real-ip"];
+// The last few are added by CloudFront and Lambda.
+const DROP_REQUEST_PREFIXES = ["sec-", "cf-", "x-forwarded-", "x-real-ip", "x-amz", "via", "cloudfront-"];
 
 // Response headers that would stop the page being framed or leak Radius'
 // cookies, or that no longer describe the body after rewriting.
@@ -80,17 +82,6 @@ function toProxyUrl(value: string): string {
   return value;
 }
 
-class AttributeRewriter {
-  private readonly attribute: string;
-  constructor(attribute: string) {
-    this.attribute = attribute;
-  }
-  element(element: Element) {
-    const value = element.getAttribute(this.attribute);
-    if (value) element.setAttribute(this.attribute, toProxyUrl(value));
-  }
-}
-
 // Synchronous XHRs (Radius uses a few, e.g. /Base/GetResources) skip
 // service workers, so proxied pages also get XMLHttpRequest.open patched.
 const XHR_PATCH = `<script>(() => {
@@ -103,15 +94,14 @@ const XHR_PATCH = `<script>(() => {
   };
 })();</script>`;
 
-const rewriter = new HTMLRewriter()
-  .on("head", {
-    element(element: { prepend(content: string, options: { html: boolean }): unknown }) {
-      element.prepend(XHR_PATCH, { html: true });
-    },
-  })
-  .on("[href]", new AttributeRewriter("href"))
-  .on("[src]", new AttributeRewriter("src"))
-  .on("form[action]", new AttributeRewriter("action"));
+const REWRITE = {
+  headPrepend: XHR_PATCH,
+  attributes: [
+    { tag: "*", attribute: "href", map: toProxyUrl },
+    { tag: "*", attribute: "src", map: toProxyUrl },
+    { tag: "form", attribute: "action", map: toProxyUrl },
+  ],
+};
 
 function forwardHeaders(request: Request, radiusPath: string): Headers {
   const headers = new Headers();
@@ -162,11 +152,8 @@ export async function handleRadiusProxy(request: Request, env: Env, url: URL): P
   const location = upstream.headers.get("Location");
   if (location) headers.set("Location", toProxyUrl(location));
 
-  const response = new Response(upstream.body, {
-    status: upstream.status,
-    statusText: upstream.statusText,
-    headers,
-  });
+  const init = { status: upstream.status, statusText: upstream.statusText, headers };
   const contentType = headers.get("Content-Type") ?? "";
-  return contentType.startsWith("text/html") ? (rewriter.transform(response as any) as unknown as Response) : response;
+  if (contentType.startsWith("text/html")) return new Response(rewriteHtml(await upstream.text(), REWRITE), init);
+  return new Response(upstream.body, init);
 }

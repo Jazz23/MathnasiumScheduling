@@ -1,0 +1,7 @@
+{
+  "app": "bun infra/app.ts",
+  "output": "cdk.out",
+  "watch": {
+    "include": ["infra/**", "server/**"]
+  }
+}

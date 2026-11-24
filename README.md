@@ -1,38 +1,59 @@
 # Mathnasium Scheduling
 
-React app built with Vite, served by a Cloudflare Worker (static assets + `/api/*`, `/radius/*` and `/sling/*` routes) backed by D1. The Vite build and dev server use `@cloudflare/vite-plugin`.
+React app built with Vite, on AWS: CloudFront serves the app from S3 and sends `/api/*`, `/radius/*`
+and `/sling/*` to a Lambda, backed by DynamoDB. The infrastructure is a TypeScript CDK app in
+`infra/`.
 
 ```bash
 bun install               # install dependencies
-bun run dev               # Vite dev server with HMR; the Worker runs in workerd against the local D1
-bun run build             # type check, then build the app and Worker into dist/
-bun run preview           # build, then preview the production build locally
-bun run deploy            # build + deploy to Cloudflare
-bun run deploy:staging    # build for env.staging + deploy mathnasium-scheduling-staging
-bun run typecheck         # check generated Worker types are current, then tsc -b
-bun run types             # regenerate worker-configuration.d.ts after changing wrangler.jsonc
+bun run dev               # Vite dev server with HMR; the server runs inside it (needs .env.local)
+bun run build             # type check, then build the app into dist/client/
+bun run deploy            # build + deploy the prod stack (needs AWS credentials)
+bun run deploy:staging    # build + deploy the staging stack
+bun run typecheck         # tsc -b over the app, server and infrastructure
 bun run lint              # oxlint
+bun run cdk diff -c stage=prod   # any other CDK command
 ```
 
-Layout: `src/` is the React app, `worker/` is the Worker, `migrations/` holds D1 migrations. See `docs/ARCHITECTURE.md`.
+Layout: `src/` is the React app, `server/` the API and proxies (run by Lambda, or by the Vite dev
+server), `infra/` the CDK stack, `scripts/` one-off tools. See `docs/ARCHITECTURE.md`.
 
-Database migrations (D1, files in `migrations/`):
+## Local development
 
 ```bash
-bun run db:migration:new <name>   # create a migration
-bun run db:migrate:local          # apply to the local dev database
-bun run db:migrate                # apply to the production database
+cp .env.example .env.local                                  # then fill in the two secrets
+docker run -d -p 8000:8000 amazon/dynamodb-local            # DynamoDB Local
+bun run db:local                                            # create the table in it
+bun run dev
 ```
+
+Or point `.env.local` at a real table (staging's) with your AWS credentials instead.
+
+## First deploy of a stage
+
+```bash
+aws configure                                               # or AWS_PROFILE=...
+bunx cdk bootstrap aws://<account-id>/us-east-1             # once per account and region
+aws ssm put-parameter --type SecureString --name /mathnasium-scheduling/prod/RADIUS_CREDENTIAL_KEY --value "$(openssl rand -base64 32)"
+aws ssm put-parameter --type SecureString --name /mathnasium-scheduling/prod/CAPMONSTER_API_KEY --value <key>
+bun run deploy                                              # prints the CloudFront URL
+```
+
+For staging, use `/mathnasium-scheduling/staging/...` and `bun run deploy:staging`.
+
+To bring over the data from the old Cloudflare D1 database (settings, programs, roster, accounts),
+with Wrangler logged in to Cloudflare:
+
+```bash
+bun run import-d1 <TableName output of the stack>
+```
+
+Run it on a new table. Stored passwords only decrypt if the stage's `RADIUS_CREDENTIAL_KEY` is the
+Worker's key. Cloudflare can't show a secret again, so without a saved copy, log in with Radius
+again after the import and link Sling again.
 
 ## Login with Radius
 
-Radius (radius.mathnasium.com) has no OAuth or refresh tokens, and it can't be embedded in an iframe. So "Log in with Radius" is the app's own form: the Worker signs in to Radius with those credentials, saves the Radius session cookies, and saves the password AES-GCM encrypted in D1. `radiusFetch()` in `worker/radius.ts` makes requests as the user and signs in again whenever the Radius session expires. "Unlink Radius" deletes everything stored for the account.
+Radius (radius.mathnasium.com) has no OAuth or refresh tokens, and it can't be embedded in an iframe. So "Log in with Radius" is the app's own form: the server signs in to Radius with those credentials, saves the Radius session cookies, and saves the password AES-GCM encrypted in DynamoDB. `radiusFetch()` in `server/radius.ts` makes requests as the user and signs in again whenever the Radius session expires. "Unlink Radius" deletes everything stored for the account.
 
-The encryption key is a Worker secret:
-
-```bash
-openssl rand -base64 32 | bunx wrangler secret put RADIUS_CREDENTIAL_KEY   # production
-echo "RADIUS_CREDENTIAL_KEY=$(openssl rand -base64 32)" > .dev.vars         # local dev
-```
-
-If the key is lost or changed, stored passwords can't be decrypted and users have to log in with Radius again.
+If `RADIUS_CREDENTIAL_KEY` is lost or changed, stored passwords can't be decrypted and users have to log in with Radius again.

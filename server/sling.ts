@@ -2,10 +2,10 @@
 // reverse proxy so the Sling web app can be shown in an iframe next to Radius.
 //
 // Login: Sling's API (POST /v1/account/login) requires a reCAPTCHA v2 token
-// from its login page (login.getsling.com). The Worker gets one from
+// from its login page (login.getsling.com). The server gets one from
 // CapMonster Cloud, signs in, and keeps the token Sling returns in its
 // Authorization response header. The password is stored encrypted so the
-// Worker can sign in again (solving a new captcha) when the token expires.
+// server can sign in again (solving a new captcha) when the token expires.
 //
 // Embed: app.getsling.com sends X-Frame-Options: SAMEORIGIN and its API only
 // allows CORS from app.getsling.com, so both are proxied:
@@ -23,7 +23,10 @@
 import type { Env } from "./env";
 import { getSessionAccount } from "./auth";
 import { decryptPassword, encryptPassword } from "./crypto";
-import type { SlingSignInParams } from "./accountLock";
+import { cancelSlingSignIn, getSlingSignIn, isActive, slingSignIn } from "./accountLock";
+import type { SlingSignInJob } from "./slingSignIn";
+import { deleteItem, getItem, isConditionFailure, keys, nowSeconds, table, transact, updateItem, updateParts } from "./db";
+import { rewriteHtml as rewriteHtmlText } from "./html";
 
 const APP_ORIGIN = "https://app.getsling.com";
 const API_ORIGIN = "https://api.getsling.com";
@@ -32,7 +35,7 @@ const LOGIN_PAGE = "https://login.getsling.com/";
 const RECAPTCHA_SITE_KEY = "6LfWw3soAAAAAHFXwfg7pycuARSxmIG28sHVTzd8";
 const CAPMONSTER = "https://api.capmonster.cloud";
 // Sling sits behind Cloudflare, which answers 403 to requests without a
-// browser-like User-Agent (the Workers runtime sends none by default).
+// browser-like User-Agent.
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36";
 
@@ -42,8 +45,8 @@ const SW_PATH = `${SLING_PREFIX}/__proxy-sw.js`;
 const PLACEHOLDER_TOKEN = "proxied";
 
 export class SlingLoginError extends Error {}
-/** The error name the SlingSignIn Workflow reports when Sling turns down the credentials. */
-export const SLING_LOGIN_ERROR = "SlingLoginError";
+/** A newer sign-in, or unlinking Sling, replaced this one before it could save. */
+export class SlingSignInSuperseded extends Error {}
 
 // ---------------------------------------------------------------- captcha
 
@@ -65,8 +68,7 @@ async function solveCaptcha(env: Env): Promise<string> {
     clientKey: env.CAPMONSTER_API_KEY,
     task: { type: "RecaptchaV2Task", websiteURL: LOGIN_PAGE, websiteKey: RECAPTCHA_SITE_KEY },
   });
-  // Checks every 5 s for up to 2 min: at most 24 checks, which keeps a sign-in
-  // and one retry within the Free plan's 50 outgoing requests per Workflow.
+  // Checks every 5 s for up to 2 min.
   const deadline = Date.now() + 120_000;
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 5000));
@@ -106,120 +108,160 @@ export async function slingLogin(env: Env, email: string, password: string): Pro
   return { token, orgId: typeof data?.org?.id === "number" ? data.org.id : null };
 }
 
-interface SlingRow {
+/** The Sling link as stored (keys.sling). */
+interface SlingItem {
   email: string;
-  password_ciphertext: string;
-  password_iv: string;
-  sling_token: string | null;
-  org_id: number | null;
+  passwordCiphertext: string; // base64
+  passwordIv: string; // base64, 12 bytes
+  slingToken: string | null; // value for Sling's Authorization header
+  orgId: number | null;
+  slingTokenUpdatedAt: number | null;
+  createdAt: number;
+  updatedAt: number;
 }
 
 const aad = (email: string) => `sling:${email}`;
 
-function getRow(env: Env, accountId: number) {
-  return env.DB.prepare(
-    "SELECT email, password_ciphertext, password_iv, sling_token, org_id FROM sling_accounts WHERE account_id = ?",
-  )
-    .bind(accountId)
-    .first<SlingRow>();
-}
+const getRow = (accountId: number) => getItem<SlingItem>(keys.sling(accountId));
 
-async function saveToken(env: Env, accountId: number, token: string, orgId?: number | null) {
-  await env.DB.prepare(
-    `UPDATE sling_accounts SET sling_token = ?, org_id = COALESCE(?, org_id),
-       sling_token_updated_at = unixepoch(), updated_at = unixepoch() WHERE account_id = ?`,
-  )
-    .bind(token, orgId ?? null, accountId)
-    .run();
+async function saveToken(accountId: number, token: string, orgId?: number | null) {
+  try {
+    await updateItem(
+      keys.sling(accountId),
+      { slingToken: token, orgId: orgId ?? undefined, slingTokenUpdatedAt: nowSeconds(), updatedAt: nowSeconds() },
+      { mustExist: true },
+    );
+  } catch (err) {
+    if (!isConditionFailure(err)) throw err; // unlinked meanwhile
+  }
 }
 
 /**
- * Signs in to Sling and saves the result. Runs inside the SlingSignIn
- * Workflow. With `link`, saves those credentials as the account's Sling link;
- * otherwise signs in again with the stored ones. Throws SlingLoginError if
- * Sling turns the credentials down.
+ * Signs in to Sling and saves the result, marking the sign-in done. Runs in
+ * the background (server/slingSignIn.ts). With `link`, saves those
+ * credentials as the account's Sling link; otherwise signs in again with the
+ * stored ones. Saves only while `signInId` is still the account's latest
+ * sign-in, and throws SlingSignInSuperseded otherwise. Throws SlingLoginError
+ * if Sling turns the credentials down.
  */
-export async function slingSignInAndSave(env: Env, { accountId, link }: SlingSignInParams): Promise<void> {
+export async function slingSignInAndSave(env: Env, { accountId, signInId, link }: SlingSignInJob): Promise<void> {
+  let save: Parameters<typeof transact>[0][number];
+  const now = nowSeconds();
   if (link) {
     const password = await decryptPassword(env.RADIUS_CREDENTIAL_KEY, aad(link.email), link.ciphertext, link.iv);
     const session = await slingLogin(env, link.email, password);
-    await env.DB.prepare(
-      `INSERT INTO sling_accounts (account_id, email, password_ciphertext, password_iv, sling_token, org_id, sling_token_updated_at)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, unixepoch())
-       ON CONFLICT (account_id) DO UPDATE SET
-         email = excluded.email, password_ciphertext = excluded.password_ciphertext,
-         password_iv = excluded.password_iv, sling_token = excluded.sling_token,
-         org_id = excluded.org_id, sling_token_updated_at = excluded.sling_token_updated_at,
-         updated_at = unixepoch()`,
-    )
-      .bind(accountId, link.email, link.ciphertext, link.iv, session.token, session.orgId)
-      .run();
-    return;
+    const existing = await getRow(accountId);
+    const item: SlingItem = {
+      email: link.email,
+      passwordCiphertext: link.ciphertext,
+      passwordIv: link.iv,
+      slingToken: session.token,
+      orgId: session.orgId,
+      slingTokenUpdatedAt: now,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+    };
+    save = { Put: { TableName: table(), Item: { ...keys.sling(accountId), ...item } } };
+  } else {
+    const row = await getRow(accountId);
+    if (!row) throw new SlingLoginError("Sling isn't linked");
+    const password = await decryptPassword(env.RADIUS_CREDENTIAL_KEY, aad(row.email), row.passwordCiphertext, row.passwordIv);
+    const session = await slingLogin(env, row.email, password);
+    save = {
+      Update: {
+        TableName: table(),
+        Key: keys.sling(accountId),
+        ...updateParts(
+          { slingToken: session.token, orgId: session.orgId ?? undefined, slingTokenUpdatedAt: now, updatedAt: now },
+          { mustExist: true },
+        ),
+      },
+    };
   }
-  const row = await getRow(env, accountId);
-  if (!row) throw new SlingLoginError("Sling isn't linked");
-  const password = await decryptPassword(env.RADIUS_CREDENTIAL_KEY, aad(row.email), row.password_ciphertext, row.password_iv);
-  const session = await slingLogin(env, row.email, password);
-  await saveToken(env, accountId, session.token, session.orgId);
+  try {
+    await transact([
+      save,
+      {
+        ConditionCheck: {
+          TableName: table(),
+          Key: keys.slingSignInPointer(accountId),
+          ConditionExpression: "signInId = :id",
+          ExpressionAttributeValues: { ":id": signInId },
+        },
+      },
+      {
+        Update: {
+          TableName: table(),
+          Key: keys.slingSignIn(accountId, signInId),
+          ...updateParts(
+            { state: "done", finishedAt: Date.now() },
+            { condition: { expression: "#state = :pending", names: { "#state": "state" }, values: { ":pending": "pending" } } },
+          ),
+        },
+      },
+    ]);
+  } catch (err) {
+    if (isConditionFailure(err)) throw new SlingSignInSuperseded(`Sling sign-in ${signInId} was replaced`);
+    throw err;
+  }
 }
-
-const lockFor = (env: Env, accountId: number) => env.ACCOUNT_LOCK.getByName(String(accountId));
 
 type SignInState = { state: "pending" } | { state: "done" } | { state: "failed"; credentials: boolean; message: string };
 
-async function signInState(env: Env, instanceId: string): Promise<SignInState> {
-  const instance = await env.SLING_SIGN_IN.get(instanceId);
-  const { status, error } = await instance.status();
-  if (status === "complete") return { state: "done" };
-  if (status === "errored" || status === "terminated" || status === "unknown") {
-    return { state: "failed", credentials: error?.name === SLING_LOGIN_ERROR, message: error?.message ?? status };
-  }
-  return { state: "pending" };
+/** A sign-in's state, or null if the account has no such sign-in. */
+async function signInState(accountId: number, signInId: string): Promise<SignInState | null> {
+  const record = await getSlingSignIn(accountId, signInId);
+  if (!record) return null;
+  if (record.state === "done") return { state: "done" };
+  if (isActive(record)) return { state: "pending" };
+  if (record.state === "pending") return { state: "failed", credentials: false, message: "timed out" };
+  return { state: "failed", credentials: !!record.credentials, message: record.message ?? record.state };
 }
 
 /**
  * Gets a new Sling token, sharing a sign-in with any other request doing the
  * same. `since` is when the caller sent the request Sling turned down. Waits
- * for the SlingSignIn Workflow, which usually takes 10–60 seconds.
+ * for the background sign-in, which usually takes 10–60 seconds.
  */
 async function refreshToken(env: Env, accountId: number, since: number): Promise<string> {
-  const ticket = await lockFor(env, accountId).slingSignIn(accountId, { since });
-  if ("instanceId" in ticket) {
+  const ticket = await slingSignIn(env, accountId, { since });
+  if ("signInId" in ticket) {
     const deadline = Date.now() + 180_000;
     for (;;) {
-      const result = await signInState(env, ticket.instanceId);
+      const result = await signInState(accountId, ticket.signInId);
+      if (!result) throw new Error("Sling sign-in disappeared");
       if (result.state === "done") break;
       if (result.state === "failed") throw new Error(`Sling sign-in failed: ${result.message}`);
       if (Date.now() > deadline) throw new Error("Timed out waiting for the Sling sign-in");
       await new Promise((r) => setTimeout(r, 3000));
     }
   }
-  const row = await getRow(env, accountId);
-  if (!row?.sling_token) throw new Error("Sling sign-in finished without a token");
-  return row.sling_token;
+  const row = await getRow(accountId);
+  if (!row?.slingToken) throw new Error("Sling sign-in finished without a token");
+  return row.slingToken;
 }
 
 /**
  * GETs a Sling API path (e.g. "/v1/users/concise") as the account and returns
- * the parsed JSON. Signs in again (through the AccountLock) if the token has
+ * the parsed JSON. Signs in again (through slingSignIn()) if the token has
  * expired. Throws if Sling isn't linked or answers with an error.
  */
 export async function slingGet<T>(env: Env, accountId: number, path: string): Promise<T> {
-  const row = await getRow(env, accountId);
+  const row = await getRow(accountId);
   if (!row) throw new SlingLoginError("Sling isn't linked");
   const send = (token: string) =>
     fetch(API_ORIGIN + path, {
       headers: { Authorization: token, Accept: "application/json", "User-Agent": USER_AGENT },
     });
   const sentAt = Date.now();
-  let token = row.sling_token ?? (await refreshToken(env, accountId, sentAt));
+  let token = row.slingToken ?? (await refreshToken(env, accountId, sentAt));
   let res = await send(token);
   if (res.status === 401) {
     token = await refreshToken(env, accountId, sentAt);
     res = await send(token);
   }
   const fresh = res.headers.get("Authorization");
-  if (fresh && fresh !== token) await saveToken(env, accountId, fresh);
+  if (fresh && fresh !== token) await saveToken(accountId, fresh);
   if (!res.ok) throw new Error(`Sling GET ${path.split("?")[0]} answered HTTP ${res.status}`);
   return (await res.json()) as T;
 }
@@ -243,13 +285,13 @@ async function handleApi(request: Request, env: Env, pathname: string): Promise<
 
   // GET /api/sling — { linked, email }
   if (pathname === "/api/sling" && request.method === "GET") {
-    const row = await getRow(env, account.id);
+    const row = await getRow(account.id);
     return json({ linked: !!row, email: row?.email ?? null });
   }
 
   // POST /api/sling — { email, password }. Starts the sign-in in the
-  // SlingSignIn Workflow and returns 202 { signIn: instanceId } right away;
-  // the page polls GET /api/sling/sign-in/:id. The Workflow only ever sees
+  // background and returns 202 { signIn: signInId } right away; the page
+  // polls GET /api/sling/sign-in/:id. The background sign-in only ever gets
   // the encrypted password.
   if (pathname === "/api/sling" && request.method === "POST") {
     const body = (await request.json().catch(() => null)) as { email?: unknown; password?: unknown } | null;
@@ -258,25 +300,20 @@ async function handleApi(request: Request, env: Env, pathname: string): Promise<
     if (!email || !password) return json({ error: "Email and password are required." }, 400);
 
     const { ciphertext, iv } = await encryptPassword(env.RADIUS_CREDENTIAL_KEY, aad(email), password);
-    const ticket = await lockFor(env, account.id).slingSignIn(account.id, { link: { email, ciphertext, iv } });
-    if (!("instanceId" in ticket)) throw new Error("Expected a new Sling sign-in");
-    return json({ signIn: ticket.instanceId }, 202);
+    const ticket = await slingSignIn(env, account.id, { link: { email, ciphertext, iv } });
+    if (!("signInId" in ticket)) throw new Error("Expected a new Sling sign-in");
+    return json({ signIn: ticket.signInId }, 202);
   }
 
   // GET /api/sling/sign-in/:id — { state: "pending" | "done" | "failed", email?, error? }
   const signInId = pathname.match(/^\/api\/sling\/sign-in\/([^/]+)$/)?.[1];
   if (signInId && request.method === "GET") {
-    // Instance IDs start with the account ID (see AccountLock), so an account
-    // can only see its own sign-ins.
-    if (!signInId.startsWith(`sling-${account.id}-`)) return json({ error: "Not found" }, 404);
-    let result: SignInState;
-    try {
-      result = await signInState(env, signInId);
-    } catch {
-      return json({ error: "Not found" }, 404);
-    }
+    // Sign-ins are stored under their account, so an account can only see
+    // its own.
+    const result = await signInState(account.id, decodeURIComponent(signInId));
+    if (!result) return json({ error: "Not found" }, 404);
     if (result.state === "done") {
-      const row = await getRow(env, account.id);
+      const row = await getRow(account.id);
       return json({ state: "done", email: row?.email ?? null });
     }
     if (result.state === "failed") {
@@ -292,8 +329,8 @@ async function handleApi(request: Request, env: Env, pathname: string): Promise<
   // DELETE /api/sling — unlink, deleting the stored password and token, and
   // stopping a sign-in that's still running.
   if (pathname === "/api/sling" && request.method === "DELETE") {
-    await lockFor(env, account.id).cancelSlingSignIn();
-    await env.DB.prepare("DELETE FROM sling_accounts WHERE account_id = ?").bind(account.id).run();
+    await cancelSlingSignIn(account.id);
+    await deleteItem(keys.sling(account.id));
     return json({ ok: true });
   }
 
@@ -321,7 +358,7 @@ self.addEventListener("fetch", (event) => {
 `;
 
 const DROP_REQUEST_HEADERS = ["cookie", "host", "origin", "referer", "connection", "content-length", "accept-encoding", "authorization"];
-const DROP_REQUEST_PREFIXES = ["sec-", "cf-", "x-forwarded-", "x-real-ip"];
+const DROP_REQUEST_PREFIXES = ["sec-", "cf-", "x-forwarded-", "x-real-ip", "x-amz", "via", "cloudfront-"];
 const DROP_RESPONSE_HEADERS = [
   "set-cookie",
   "authorization",
@@ -374,33 +411,17 @@ function headScript(orgId: number | null): string {
 })();</script>`;
 }
 
-class AttributeRewriter {
-  private readonly attribute: string;
-  constructor(attribute: string) {
-    this.attribute = attribute;
-  }
-  element(el: Element) {
-    const value = el.getAttribute(this.attribute);
-    if (value) el.setAttribute(this.attribute, toProxyUrl(value));
-  }
-}
-
-function rewriteHtml(response: Response, orgId: number | null): Response {
-  return new HTMLRewriter()
-    .on("head", {
-      element(el: { prepend(content: string, options: { html: boolean }): unknown }) {
-        el.prepend(headScript(orgId), { html: true });
-      },
-    })
-    .on("base[href]", {
-      element(el: { setAttribute(n: string, v: string): unknown }) {
-        el.setAttribute("href", SLING_PREFIX + "/");
-      },
-    })
-    .on("script[src]", new AttributeRewriter("src"))
-    .on("link[href]", new AttributeRewriter("href"))
-    .on("img[src]", new AttributeRewriter("src"))
-    .transform(response as any) as unknown as Response;
+async function rewriteHtml(upstream: Response, headers: Headers, orgId: number | null): Promise<Response> {
+  const html = rewriteHtmlText(await upstream.text(), {
+    headPrepend: headScript(orgId),
+    attributes: [
+      { tag: "base", attribute: "href", map: () => SLING_PREFIX + "/" },
+      { tag: "script", attribute: "src", map: toProxyUrl },
+      { tag: "link", attribute: "href", map: toProxyUrl },
+      { tag: "img", attribute: "src", map: toProxyUrl },
+    ],
+  });
+  return new Response(html, { status: upstream.status, statusText: upstream.statusText, headers });
 }
 
 // Points the app's bundles at the API proxy instead of api.getsling.com.
@@ -410,7 +431,7 @@ async function rewriteJs(upstream: Response, headers: Headers): Promise<Response
 }
 
 async function proxyApi(request: Request, env: Env, accountId: number, url: URL): Promise<Response> {
-  const row = await getRow(env, accountId);
+  const row = await getRow(accountId);
   if (!row) return json({ message: "Sling isn't linked." }, 401);
 
   const path = url.pathname.slice(API_PREFIX.length) + url.search;
@@ -424,7 +445,7 @@ async function proxyApi(request: Request, env: Env, accountId: number, url: URL)
   };
 
   const sentAt = Date.now();
-  let token = row.sling_token ?? (await refreshToken(env, accountId, sentAt));
+  let token = row.slingToken ?? (await refreshToken(env, accountId, sentAt));
   let upstream = await send(token);
   if (upstream.status === 401) {
     token = await refreshToken(env, accountId, sentAt);
@@ -432,12 +453,12 @@ async function proxyApi(request: Request, env: Env, accountId: number, url: URL)
   }
   // Sling can hand back a refreshed token.
   const fresh = upstream.headers.get("Authorization");
-  if (fresh && fresh !== token) await saveToken(env, accountId, fresh);
+  if (fresh && fresh !== token) await saveToken(accountId, fresh);
 
   return new Response(upstream.body, { status: upstream.status, statusText: upstream.statusText, headers: cleanHeaders(upstream) });
 }
 
-async function proxyApp(request: Request, env: Env, accountId: number, url: URL): Promise<Response> {
+async function proxyApp(request: Request, accountId: number, url: URL): Promise<Response> {
   const path = (url.pathname.slice(SLING_PREFIX.length) || "/") + url.search;
   const upstream = await fetch(APP_ORIGIN + path, {
     method: request.method === "HEAD" ? "HEAD" : "GET",
@@ -450,12 +471,11 @@ async function proxyApp(request: Request, env: Env, accountId: number, url: URL)
 
   const contentType = headers.get("Content-Type") ?? "";
   if (contentType.includes("javascript")) return rewriteJs(upstream, headers);
-  const response = new Response(upstream.body, { status: upstream.status, statusText: upstream.statusText, headers });
   if (contentType.startsWith("text/html")) {
-    const row = await getRow(env, accountId);
-    return rewriteHtml(response, row?.org_id ?? null);
+    const row = await getRow(accountId);
+    return rewriteHtml(upstream, headers, row?.orgId ?? null);
   }
-  return response;
+  return new Response(upstream.body, { status: upstream.status, statusText: upstream.statusText, headers });
 }
 
 /** Handles /api/sling and /sling/* requests, or returns null for other paths. */
@@ -472,5 +492,5 @@ export async function handleSling(request: Request, env: Env, url: URL): Promise
   const account = await getSessionAccount(request, env);
   if (!account) return new Response("Not signed in to the scheduling app.", { status: 401 });
   if (pathname.startsWith(API_PREFIX + "/")) return proxyApi(request, env, account.id, url);
-  return proxyApp(request, env, account.id, url);
+  return proxyApp(request, account.id, url);
 }

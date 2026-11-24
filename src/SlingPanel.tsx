@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { ensureProxyWorker } from "./RadiusSchedule";
 
-// Served by the Worker's Sling proxy (src/server/sling.ts).
+// Served by the server's Sling proxy (server/sling.ts).
 const PROXY_SW = "/sling/__proxy-sw.js";
 const SLING_HOME = "/sling/";
 

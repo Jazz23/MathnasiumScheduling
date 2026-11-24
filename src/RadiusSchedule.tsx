@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-// Served by the Worker's Radius proxy (src/server/radiusProxy.ts).
+// Served by the server's Radius proxy (server/radiusProxy.ts).
 const PROXY_SW = "/radius/__proxy-sw.js";
 const CALENDAR = "/radius/Scheduling/Calendar";
 
