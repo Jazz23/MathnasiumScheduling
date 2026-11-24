@@ -126,6 +126,27 @@ Radius multiplies that by the ratio to decide how many seats parents can book, s
 4:1 gives 12 seats. This is the center's guess at staffing, not the Sling schedule. If the app's
 schedule staffs a time differently, the director may want this capacity updated to match.
 
+How that capacity works, from Mathnasium's myMathnasium Center Admin Guide (October 2026):
+
+- Each row has a name, days, a time range, delivery methods, a number of instructors (decimals
+  allowed) and the session types its instructors can teach. Rows with different names that overlap
+  add up. Rows with the same name that overlap don't: the most recently added one wins.
+- A session type is "what an instructor can teach", and each grade range is assigned one. Standard
+  covers elementary and middle school; High School, Great Foundations and Private are separate. The
+  guide recommends separate rows for Great Foundations and Private so they don't use up the others'
+  capacity.
+- A row with both In-Center and Online checked shares its instructors between the two. Separate rows
+  give each its own capacity. This matches question 22: one instructor can take both.
+- Capacity can be by instructors (ratio-based, as here) or by seats (all ratios set to 1:1), chosen
+  in Radius' Scheduling settings.
+- Pods (Radius calls them groups) are optional sub-capacities where a student works with one
+  instructor. Groups don't share capacity. Parents never see pods or instructors, only open times.
+- Times with no capacity can't be booked, so they work as drop-in times.
+- The default capacity applies to every future week that hasn't been edited by hand. A week can be
+  edited on its own, which is how capacity could follow each week's schedule (open question 27).
+- Booking start times can be limited to :00, :15, :30 or :45 in Radius' Scheduling settings, and
+  only franchise owners can open Radius Settings.
+
 ### 2. Employee roster
 
 - Import employees from Sling (people, positions, locations) and keep the list in sync.
@@ -182,6 +203,10 @@ with them.
   usually the same length each time for a given student. They start on any 15 minutes (Radius'
   calendar counts seats in 15-minute slots), so the scheduler plans in 15-minute blocks.
 - Account for appointments that need specific skills (assessments, test prep).
+- Skip appointments left over from ended enrollments. Radius doesn't cancel a student's future
+  recurring appointments when their enrollment ends: staff have to remove them by hand. Until
+  Mathnasium's planned fix ships, those appointments look like real demand. Check each appointment's
+  enrollment, or flag recurring appointments for students who no longer attend.
 - Add the students predicted to come without an appointment (feature 5). Most students book, so
   booked appointments are most of the demand and the prediction fills in the rest.
 - Add the presence rules on top: two employees, one of them a supervisor, whenever the center is
@@ -362,12 +387,19 @@ parents who email or text instead.
    (below).
 5. **Book**: create the appointment in Radius.
 6. **Reply**: Claude writes a short reply from the result (the booked time, or the alternatives on
-   offer). The reply goes out on the channel the parent used.
+   offer). The reply goes out on the channel the parent used. Radius also sends its own notice: the
+   guide says myMathnasium notifies guardians, with an email, when a session is scheduled,
+   rescheduled or cancelled.
 
 **Choosing the best time** (code, using the same data as the scheduler):
 
 - Only times when the center is open, and only if the student has sessions left this month (Radius
   tracks this for each student). A student with none left goes to the director, who may offer more.
+- Within Radius' booking limits: daily and weekly limits set center-wide, which each enrollment can
+  override, and a monthly limit on monthly memberships. Admins (and so the bot, signed in as the
+  director) can book past these limits, so the bot has to check them itself.
+- Only at the student's session length from their enrollment (usually 60 minutes, 90 for high
+  school).
 - Only times when the staff already scheduled in Sling can take one more student at the student's
   level within the ratio, so a booking never opens a coverage gap. If there's no such time, offer the
   nearest alternatives, or ask the director whether to add staff. An online appointment can also use
@@ -698,10 +730,14 @@ Answered questions are kept, struck through, with their answers.
     break, is fine.
 17. Booking assistant: which email address and phone number do parents use today, and who controls
     them? That decides how the bot receives messages and where replies come from.
-18. Do bookings made in myMathnasium show up in Radius' calendar right away? Can the center limit
-    which times parents can pick there, for example to steer bookings earlier in the day?
-19. Besides sessions left this month, does anything else limit booking: a weekly maximum, a fixed
-    appointment length?
+18. ~~Do bookings made in myMathnasium show up in Radius' calendar right away? Can the center limit
+    which times parents can pick there?~~ Answered by the myMathnasium guide: myMathnasium books
+    straight into Radius' integrated scheduler, so yes. Parents can only pick times that have
+    capacity, at the allowed start times. Steering them earlier would mean giving later times less
+    capacity.
+19. ~~Besides sessions left this month, does anything else limit booking?~~ Answered by the guide:
+    daily and weekly booking limits (center-wide, overridable per enrollment), a monthly limit for
+    monthly memberships, and each enrollment's session length (feature 11).
 20. ~~If the earliest time in a parent's window would need an extra instructor but a later time has
     room, should the bot offer the later time, or ask the director first?~~ Answered 2026-11-24: offer
     the later time.
@@ -723,3 +759,10 @@ Answered questions are kept, struck through, with their answers.
 26. What happens to the hand-made repeating shifts already in Sling? The app can treat them as fixed
     and schedule around them, or the director can let them end and have the app take over those
     times.
+27. Should the app keep Radius' booking capacity in line with each week's schedule? Radius lets a
+    single week's capacity be edited without changing the default, so the app could set each week's
+    instructors per time from the published schedule. Parents would then only see times that are
+    really staffed. It would be a second kind of write to Radius, after booking.
+28. Is this center set up as a Scheduling Center (the myMathnasium integrated scheduler), and are any
+    pods or groups used in Default capacity? The calendar data suggests yes and no, but it's worth
+    confirming before reading capacity.
