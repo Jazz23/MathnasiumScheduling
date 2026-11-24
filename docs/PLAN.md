@@ -172,7 +172,8 @@ How that capacity works, from Mathnasium's myMathnasium Center Admin Guide (Octo
     (SAT/ACT prep, can run assessments). Levels follow the student's grade (answered 2026-11-24).
   - Teaching limit, for people with other duties: the largest share of their time on site that
     should be teaching (for example Carol: 50% at most). The rest is on-site time for other work.
-  - Preferred programs: employees who should be first choice for a school program.
+  - Assigned programs: the school programs each employee normally staffs. They're the default for
+    that program; someone else covers only when they aren't available (decided 2026-11-24).
   - Remote work: whether they can work from home, for example to teach online appointments. Today
     everyone can, so this defaults to yes.
   - Priority or seniority, used to break ties.
@@ -229,11 +230,14 @@ with them.
 **Online** (from Radius): online appointments are counted the same way, by level, but separately.
 They don't need anyone at the center: an instructor at the center can take them alongside
 in-center students (answered 2026-11-24), or someone on a remote shift. Each appointment has a delivery method ("In-Center" or "Online"), and online students
-use the online ratio, which is lower. Online appointments are rare today: 13 of about 3,400 between
+use the online ratio, which is lower. In a mixed group each student uses up their own ratio's share
+of an instructor (in center 1/4, online 1/3 for elementary), up to one instructor in total (decided
+2026-11-24). Online appointments are rare today: 13 of about 3,400 between
 June and November 2026.
 
 **School programs** (off-site): each program's days, times and instructors needed come from center
-setup (Valencia needs 2, Rio del Mar 3). This demand is fixed, not predicted.
+setup (Valencia needs 2, Rio del Mar 3). This demand is fixed, not predicted. Each program has
+assigned employees who staff it by default (roster).
 
 ### 5. Predicted attendance
 
@@ -304,7 +308,9 @@ Builds a draft from the demand, the employees' availability and preferences, and
 - Prefer fewer, longer shifts over fragmented ones.
 - Keep each employee's teaching within their teaching limit, so people with other duties have time
   for them.
-- Staff each school program with its preferred employees first.
+- Staff each school program with its assigned employees whenever they're available. Someone else
+  covers a program session only when an assigned employee can't (unavailable, time off, or a hard
+  rule), so this outweighs hour and time preferences.
 - When someone is needed only for online students, give them a remote shift instead of bringing them
   to the center. Online students go to instructors already at the center first, if they have room.
   Anyone can work remotely.
@@ -346,11 +352,11 @@ either form fits; the compact one is still faster. A greedy heuristic stays the 
 - Put each shift under the Sling location and position for where it is (the center, a school
   program, or remote).
 - **Remote shifts**: Sling has no remote shift type, but every shift has a location and an account
-  can have several. Remote shifts go under a "Remote" location. If the center uses Sling's time clock
+  can have several. Remote shifts go under Sling's existing "Online" location (decided 2026-11-24),
+  chosen as the remote location in the Center tab. If the center ever turns on Sling's time clock
   with geofencing, leave that location's address and IP blank: Sling's help says that exempts a
-  location from geofence restrictions, so people can clock in from home. Sling already has an
-  "Online" location, which could be used for this. The time clock is off at this center (checked
-  2026-11-24), so geofencing doesn't matter today.
+  location from geofence restrictions, so people can clock in from home. The time clock is off at
+  this center (checked 2026-11-24), so geofencing doesn't matter today.
 - Show each shift's break in Sling: shifts have a `breakDuration` field in minutes. No shift uses it
   today, and Sling's automatic breaks are off.
 - Store the Sling ID of every shift the app creates. Publishing again updates or removes those shifts
@@ -458,7 +464,7 @@ change.
 | --- | --- | --- |
 | Carol (owner) can teach, but at most about 50% of her time on site, so she has time for admin work. | Soft: teaching limit | Roster: teaching limit. Scheduler: on-site time that isn't teaching. |
 | Keiko can teach up to middle school, not high school or above. | Hard: level | Roster: highest level. Demand counted by level (from grade). |
-| Keiko is the preferred teacher for the school programs at Valencia and Rio del Mar. | Soft: preferred staff | Roster: preferred programs. Center setup: school programs. |
+| Keiko is assigned to the school programs at Valencia and Rio del Mar: she staffs them by default, and others cover when she's not available. | Soft (strong): assigned staff | Roster: assigned programs. Center setup: school programs. |
 | Carol prefers to work from home on Sundays and Wednesdays, doing admin work, not teaching. | Soft: work-from-home days | Preferences: work-from-home days. Scheduler: remote shifts. |
 | Anyone can work from home. | Roster default | Roster: remote work. |
 | Deven or Grace (assistant center directors) or Carol must be at the center whenever it's open. | Hard: presence | Roster: roles. Center setup: presence rules. |
@@ -509,7 +515,7 @@ The API and the background Lambdas all use:
   and Sling accounts, using the credentials already stored. Each job records its state in DynamoDB,
   like the Sling sign-in does.
 - **Storage (tentative)**: items for center settings, locations and school programs, roster details
-  (roles, levels, teaching limits, preferred programs, remote work, work-from-home days, hour
+  (roles, levels, teaching limits, assigned programs, remote work, work-from-home days, hour
   preferences, availability), student visits, attendance
   overrides and marked dates, schedule runs, draft shifts, and the mapping from draft shifts to Sling
   shift IDs. Time off stays in Sling. Each schedule run saves a copy of the inputs it
@@ -641,7 +647,7 @@ records let its accuracy be checked against past weeks right away.
 | --- | --- | --- |
 | 0. Foundations | Login with Radius, link Sling, embedded views, Cloudflare + D1 setup, then moved to AWS (Lambda, DynamoDB, CDK) on 2026-11-24 | Done |
 | 1. Read the data | Groundwork: generated types, staging environment, a Durable Object sign-in lock per account, Sling sign-in moved into a Workflow. Then read Radius appointments (with student levels, and whether each is online) and the ratio, and the Sling roster, locations, time off and existing shifts. Show booked demand per time block in the app. | Built 2026-11-24. Not yet: flagging appointments left over from ended enrollments. |
-| 2. Setup | Center setup (hours, presence rules, school programs, the Remote location). Roster details: roles, levels, teaching limits, preferred programs, remote work, work-from-home days, hour preferences. Availability for each employee, suggested from past Sling shifts. | Built 2026-11-24 |
+| 2. Setup | Center setup (hours, presence rules, school programs, the remote location). Roster details: roles, levels, teaching limits, assigned programs, remote work, work-from-home days, hour preferences. Availability for each employee, suggested from past Sling shifts. | Built 2026-11-24 |
 | 3. Generate drafts | Scheduler v1 (heuristic) with the coverage report. No publishing yet. | Planned |
 | 4. Review and edit | Calendar view of the draft, manual edits, locking, regenerate around locks. | Planned |
 | 5. Publish | Create, update and remove the app's shifts in Sling. | Planned |
@@ -742,7 +748,8 @@ Answered questions are kept, struck through, with their answers.
     due a break?~~ Answered 2026-11-24: paid. No third person: two people on, one of them on a
     break, is fine.
 17. Booking assistant: which email address and phone number do parents use today, and who controls
-    them? That decides how the bot receives messages and where replies come from.
+    them? That decides how the bot receives messages and where replies come from. Deferred
+    (2026-11-24).
 18. ~~Do bookings made in myMathnasium show up in Radius' calendar right away? Can the center limit
     which times parents can pick there?~~ Answered by the myMathnasium guide: myMathnasium books
     straight into Radius' integrated scheduler, so yes. Parents can only pick times that have
@@ -758,12 +765,12 @@ Answered questions are kept, struck through, with their answers.
     or something else? Is the ratio the same for online students?~~ Answered 2026-11-23: a delivery
     method field on the appointment. Online students have their own, lower ratio.
 22. ~~Can an instructor at the center teach online students alongside in-center ones?~~ Answered
-    2026-11-24: yes. Still open: how a mixed group is counted against the ratio. Proposed: each
-    student uses up their own ratio's share (an in-center elementary student 1/4 of an instructor, an
-    online one 1/3), and the total can't pass one instructor.
+    2026-11-24: yes. A mixed group is counted by share (confirmed 2026-11-24): each student uses up
+    their own ratio's share (an in-center elementary student 1/4 of an instructor, an online one
+    1/3), and the total can't pass one instructor.
 23. ~~Besides Carol, who can work from home? Does the center use Sling's time clock with
-    geofencing?~~ Answered 2026-11-24: anyone can. The time clock is off. Still open: should remote
-    shifts use Sling's existing "Online" location?
+    geofencing?~~ Answered 2026-11-24: anyone can. The time clock is off. Remote shifts use Sling's
+    existing "Online" location (feature 8).
 24. ~~On Carol's days at home, should the scheduler give her online students to teach, or keep those
     days for admin work? Is the center open on Sundays?~~ Answered 2026-11-24: keep them for admin
     work. The center is open on Sundays.

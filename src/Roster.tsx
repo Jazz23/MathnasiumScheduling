@@ -285,7 +285,7 @@ function EmployeeEditor({
         </fieldset>
         {programs.length > 0 && (
           <fieldset>
-            <legend>First choice for these school programs</legend>
+            <legend>Assigned to these school programs</legend>
             {programs.map((p) => (
               <label key={p.id} className="check">
                 <input

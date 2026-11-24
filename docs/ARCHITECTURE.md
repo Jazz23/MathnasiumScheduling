@@ -73,7 +73,7 @@ doesn't cache them, and passes on every header except `Host`.
 | `POST /api/setup/programs`, `PUT`, `DELETE /api/setup/programs/:id` | `server/setup.ts` | School programs and their sessions. |
 | `GET /api/roster` | `server/roster.ts` | Everyone on the roster, with programs, availability and preferences. |
 | `POST /api/roster/sync` | `server/roster.ts` | Imports people from Sling. |
-| `PUT /api/roster/:slingUserId` | `server/roster.ts` | Saves a person's details and preferred programs. |
+| `PUT /api/roster/:slingUserId` | `server/roster.ts` | Saves a person's details and assigned programs. |
 | `PUT /api/roster/:slingUserId/availability` | `server/roster.ts` | Replaces one availability pattern (`effectiveFrom` and its windows). |
 | `PUT /api/roster/:slingUserId/preferences` | `server/roster.ts` | Replaces a person's prefer/avoid times. |
 | `GET /api/roster/availability-suggestions?weeks=` | `server/roster.ts` | Each person's usual times from their past Sling shifts. |
