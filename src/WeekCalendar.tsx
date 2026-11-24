@@ -5,7 +5,9 @@ import { WEEKDAYS_SHORT, formatTime, type Window } from "./api";
 // a block, drag a block to move it (to another day too), drag its top or
 // bottom edge to resize it, and click it to change its kind or delete it.
 // Times snap to 15 minutes. Overlapping blocks of the same kind merge, and a
-// block drawn over another kind replaces that part of it.
+// block drawn over another kind in the same layer replaces that part of it.
+// Kinds in different layers (availability under preferences) overlap freely;
+// only the layer of the kind being drawn can be edited.
 
 export type CalEvent<K extends string> = Window & { kind: K };
 export interface CalKind<K extends string> {
@@ -13,6 +15,10 @@ export interface CalKind<K extends string> {
   label: string;
   /** CSS class giving the block its color. */
   className: string;
+  /** Kinds in one layer replace each other; layers stack. Defaults to one layer. */
+  layer?: string;
+  /** Drawn narrower, to the right, so the layer beneath shows. */
+  inset?: boolean;
 }
 
 const SNAP = 15;
@@ -29,23 +35,27 @@ const snap = (m: number) => Math.round(m / SNAP) * SNAP;
 
 /**
  * Lays `events` onto each day minute by minute, later events over earlier
- * ones, and reads the runs back. This merges overlaps of one kind and lets a
- * later block replace another kind where they overlap.
+ * ones, and reads the runs back, separately for each layer. This merges
+ * overlaps of one kind and lets a later block replace another kind of the same
+ * layer where they overlap.
  */
-function normalize<K extends string>(events: CalEvent<K>[]): CalEvent<K>[] {
+function normalize<K extends string>(events: CalEvent<K>[], layerOf: (kind: K) => string): CalEvent<K>[] {
   const out: CalEvent<K>[] = [];
-  for (let day = 0; day < 7; day++) {
-    const minutes: (K | null)[] = new Array(1440).fill(null);
-    for (const e of events) {
-      if (e.weekday !== day) continue;
-      for (let m = toMin(e.start); m < toMin(e.end); m++) minutes[m] = e.kind;
-    }
-    let runStart = 0;
-    for (let m = 1; m <= 1440; m++) {
-      if (m < 1440 && minutes[m] === minutes[runStart]) continue;
-      const kind = minutes[runStart];
-      if (kind !== null && kind !== undefined) out.push({ weekday: day, start: toTime(runStart), end: toTime(m), kind });
-      runStart = m;
+  const layers = new Set(events.map((e) => layerOf(e.kind)));
+  for (const layer of layers) {
+    for (let day = 0; day < 7; day++) {
+      const minutes: (K | null)[] = new Array(1440).fill(null);
+      for (const e of events) {
+        if (e.weekday !== day || layerOf(e.kind) !== layer) continue;
+        for (let m = toMin(e.start); m < toMin(e.end); m++) minutes[m] = e.kind;
+      }
+      let runStart = 0;
+      for (let m = 1; m <= 1440; m++) {
+        if (m < 1440 && minutes[m] === minutes[runStart]) continue;
+        const kind = minutes[runStart];
+        if (kind !== null && kind !== undefined) out.push({ weekday: day, start: toTime(runStart), end: toTime(m), kind });
+        runStart = m;
+      }
     }
   }
   return out;
@@ -75,6 +85,8 @@ export function WeekCalendar<K extends string>({
   const [selected, setSelected] = useState<number | null>(null);
   const columnsRef = useRef<HTMLDivElement>(null);
   const kindOf = (id: K) => kinds.find((k) => k.id === id) ?? kinds[0]!;
+  const layerOf = (id: K) => kindOf(id).layer ?? "";
+  const activeLayer = layerOf(newKind);
 
   // The hours shown: 8 AM to 9 PM, widened to fit anything already entered.
   const all = [...value, ...backdrop];
@@ -133,7 +145,7 @@ export function WeekCalendar<K extends string>({
       }
       const result = dragged(d)!;
       const others = d.type === "create" ? value : value.filter((_, i) => i !== d.index);
-      const next = normalize([...others, result]);
+      const next = normalize([...others, result], layerOf);
       onChange(next);
       setSelected(
         next.findIndex((n) => n.weekday === result.weekday && n.kind === result.kind && n.start <= result.start && n.end >= result.end),
@@ -155,9 +167,9 @@ export function WeekCalendar<K extends string>({
   };
   const setKind = (index: number, kind: K) => {
     const e = value[index]!;
-    const next = normalize([...value.filter((_, i) => i !== index), { ...e, kind }]);
+    const next = normalize([...value.filter((_, i) => i !== index), { ...e, kind }], layerOf);
     onChange(next);
-    setSelected(next.findIndex((n) => n.weekday === e.weekday && n.start <= e.start && n.end >= e.end));
+    setSelected(next.findIndex((n) => n.kind === kind && n.weekday === e.weekday && n.start <= e.start && n.end >= e.end));
   };
 
   // Delete or Backspace removes the selected block; Escape deselects.
@@ -204,14 +216,16 @@ export function WeekCalendar<K extends string>({
   const hours: number[] = [];
   for (let h = Math.ceil(from / 60) * 60; h < to; h += 60) hours.push(h);
 
-  const block = (e: CalEvent<K>, key: string | number, index: number | null, ghost = false) => {
+  const block = (e: CalEvent<K>, key: string | number, at: number | null, ghost = false) => {
     const k = kindOf(e.kind);
+    // Blocks in another layer are shown but let the pointer through, so you can draw over them.
+    const index = at !== null && layerOf(e.kind) === activeLayer ? at : null;
     const isSelected = index !== null && index === selected && !drag;
     const minutes = toMin(e.end) - toMin(e.start);
     return (
       <div
         key={key}
-        className={`cal-event ${k.className} ${ghost ? "ghost" : ""} ${isSelected ? "selected" : ""}`}
+        className={`cal-event ${k.className} ${k.inset ? "inset" : ""} ${at !== null && index === null ? "other-layer" : ""} ${ghost ? "ghost" : ""} ${isSelected ? "selected" : ""}`}
         style={{ top: top(e.start), height: minutes * PX_PER_MIN }}
         onPointerDown={index === null ? undefined : (ev) => startMove(ev, index)}
       >
@@ -223,9 +237,8 @@ export function WeekCalendar<K extends string>({
         {index !== null && <div className="cal-handle bottom" onPointerDown={(ev) => startResize(ev, index, "end")} />}
         {isSelected && (
           <div className="cal-popover" onPointerDown={(ev) => ev.stopPropagation()}>
-            {kinds.length > 1 &&
-              kinds
-                .filter((other) => other.id !== e.kind)
+            {kinds
+                .filter((other) => other.id !== e.kind && layerOf(other.id) === activeLayer)
                 .map((other) => (
                   <button key={other.id} type="button" className="link-button" onClick={() => setKind(index, other.id)}>
                     Make “{other.label}”
@@ -260,7 +273,10 @@ export function WeekCalendar<K extends string>({
             ))}
           </span>
         ) : null}
-        <span>Drag on the calendar to add time. Drag a block to move it, its edges to resize it, click it to delete it.</span>
+        <span>
+          Drag on the calendar to add time. Drag a block to move it, its edges to resize it, click it to delete it.
+          {new Set(kinds.map((k) => k.layer ?? "")).size > 1 && " Only blocks of the kind you're drawing can be changed."}
+        </span>
         {backdrop.length > 0 && backdropLabel && (
           <span>
             <span className="cal-backdrop-swatch" /> {backdropLabel}
@@ -295,7 +311,8 @@ export function WeekCalendar<K extends string>({
                   .map((w, i) => (
                     <div key={`b${i}`} className="cal-backdrop" style={{ top: top(w.start), height: (toMin(w.end) - toMin(w.start)) * PX_PER_MIN }} />
                   ))}
-                {value.map((e, i) => (e.weekday === day && i !== hidden ? block(e, i, i) : null))}
+                {value.map((e, i) => (e.weekday === day && i !== hidden && layerOf(e.kind) !== activeLayer ? block(e, i, i) : null))}
+                {value.map((e, i) => (e.weekday === day && i !== hidden && layerOf(e.kind) === activeLayer ? block(e, i, i) : null))}
                 {preview && preview.weekday === day && block(preview, "preview", null, true)}
               </div>
             ))}

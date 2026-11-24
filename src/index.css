@@ -464,3 +464,11 @@ fieldset {
 .cal-avoid {
   background: #b5452f;
 }
+.cal-event.inset {
+  left: 35%;
+}
+.cal-event.other-layer {
+  pointer-events: none;
+  opacity: 0.55;
+  box-shadow: none;
+}

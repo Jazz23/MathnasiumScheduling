@@ -221,7 +221,9 @@ schedule and the Sling panel. A tab mounts the first time it's opened and then s
 Sling panel links Sling, then shows Sling's app. Opening hours, program sessions, availability and
 preferences are drawn on a Google Calendar-style week view (`src/WeekCalendar.tsx`): drag to add a block, drag it to move or
 resize it, click it to delete it or switch prefer/avoid. Times snap to 15 minutes; overlapping
-blocks of one kind merge, and drawing over another kind replaces it. `src/api.ts` has the API client and the response
+blocks of one kind merge, and drawing over another kind replaces it. Kinds can sit in layers:
+a person's availability and preferences share one week, with preferences drawn narrower on top
+of availability, and only the layer being drawn can be edited. One button saves both. `src/api.ts` has the API client and the response
 shapes, which have to be kept in step with the Worker's.
 
 ## Database

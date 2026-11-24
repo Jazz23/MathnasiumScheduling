@@ -165,6 +165,13 @@ function EmployeeEditor({
       setStatus(err instanceof Error ? err.message : "Couldn't save.");
     }
   };
+  // Availability and preferences share one calendar and one Save button.
+  const saveWeek = async (availability: { effectiveFrom: string; windows: Window[] }, preferences: Preference[]) => {
+    const base = `/api/roster/${employee.slingUserId}`;
+    await api(`${base}/availability`, { method: "PUT", body: availability });
+    const r = await api<{ employees: Employee[] }>(`${base}/preferences`, { method: "PUT", body: { preferences } });
+    onSaved(r.employees);
+  };
   const numberOrNull = (v: string) => (v === "" ? null : Number(v));
   const toggle = (list: number[], n: number, on: boolean) => (on ? [...list, n] : list.filter((x) => x !== n));
 
@@ -303,27 +310,36 @@ function EmployeeEditor({
         </div>
       </form>
 
-      <AvailabilityEditor employee={employee} suggestion={suggestion} save={(body) => put("/availability", body)} />
-
-      <h3>Preferences</h3>
-      <p className="radius-note">Times they'd like to work or avoid. The scheduler tries to honor these but may not.</p>
-      <PreferencesEditor employee={employee} save={(preferences) => put("/preferences", { preferences })} />
+      <ScheduleEditor employee={employee} suggestion={suggestion} save={saveWeek} />
     </section>
   );
 }
 
-function AvailabilityEditor({
+const WEEK_KINDS: CalKind<"available" | Preference["kind"]>[] = [
+  { id: "available", label: "Available", className: "cal-available", layer: "availability" },
+  { id: "prefer", label: "Prefers", className: "cal-prefer", layer: "preference", inset: true },
+  { id: "avoid", label: "Avoids", className: "cal-avoid", layer: "preference", inset: true },
+];
+
+type Preference = Window & { kind: "prefer" | "avoid" };
+
+// Availability (when they can work) and preferences (when they'd like to work
+// or not) on one week: availability fills the day, preferences sit on top.
+function ScheduleEditor({
   employee,
   suggestion,
   save,
 }: {
   employee: Employee;
   suggestion: AvailabilitySuggestion | null;
-  save: (body: { effectiveFrom: string; windows: Window[] }) => Promise<void>;
+  save: (availability: { effectiveFrom: string; windows: Window[] }, preferences: Preference[]) => Promise<void>;
 }) {
   const latest = employee.availability.at(-1);
   const [effectiveFrom, setEffectiveFrom] = useState(latest?.effectiveFrom ?? localToday());
   const [windows, setWindows] = useState<Window[]>(latest?.windows ?? []);
+  const [prefs, setPrefs] = useState<Preference[]>(employee.preferences);
+  const [status, setStatus] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
 
   const pick = (date: string) => {
     setEffectiveFrom(date);
@@ -331,16 +347,36 @@ function AvailabilityEditor({
     if (existing) setWindows(existing.windows);
   };
 
+  const events = [...windows.map((w) => ({ ...w, kind: "available" as const })), ...prefs];
+  const onChange = (next: typeof events) => {
+    setWindows(next.filter((e) => e.kind === "available").map(({ weekday, start, end }) => ({ weekday, start, end })));
+    setPrefs(next.filter((e): e is Preference => e.kind !== "available"));
+  };
+
+  async function submit() {
+    setBusy(true);
+    setStatus(null);
+    try {
+      await save({ effectiveFrom, windows }, prefs);
+      setStatus("Saved.");
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : "Couldn't save.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <>
-      <h3>Availability</h3>
+      <h3>Availability and preferences</h3>
       <p className="radius-note">
-        When they can work each week. The scheduler never schedules anyone outside these times. A new starting date keeps the
-        old times for earlier weeks (for example a new school term).
+        <b>Available</b>: when they can work. The scheduler never schedules anyone outside these times. <b>Prefers</b> and{" "}
+        <b>Avoids</b>: times they'd like to work or not; the scheduler tries to honor these but may not. A new starting date
+        keeps the old availability for earlier weeks (for example a new school term); preferences apply to every week.
       </p>
       {employee.availability.length > 1 && (
         <p className="radius-note">
-          Saved patterns:{" "}
+          Saved availability:{" "}
           {employee.availability.map((p) => (
             <button key={p.effectiveFrom} type="button" className="link-button" onClick={() => pick(p.effectiveFrom)}>
               from {p.effectiveFrom}
@@ -349,7 +385,7 @@ function AvailabilityEditor({
         </p>
       )}
       <label>
-        Starting{" "}
+        Availability starting{" "}
         <input type="date" value={effectiveFrom} onChange={(e) => e.target.value && setEffectiveFrom(e.target.value)} />
       </label>
       {suggestion && (
@@ -361,49 +397,22 @@ function AvailabilityEditor({
             className="link-button"
             onClick={() => setWindows(suggestion.windows.map(({ weekday, start, end }) => ({ weekday, start, end })))}
           >
-            Use these
+            Use these as availability
           </button>
         </p>
       )}
       <WeekCalendar
-        value={windows.map((w) => ({ ...w, kind: "available" as const }))}
-        onChange={(next) => setWindows(next.map(({ weekday, start, end }) => ({ weekday, start, end })))}
-        kinds={AVAILABLE_KIND}
+        value={events}
+        onChange={onChange}
+        kinds={WEEK_KINDS}
         backdrop={suggestion?.windows ?? []}
         backdropLabel={suggestion ? `Worked in the last ${suggestion.weeks} weeks` : undefined}
       />
       <div className="radius-actions">
-        <button type="button" className="radius-button" onClick={() => void save({ effectiveFrom, windows })}>
-          Save availability
+        <button type="button" className="radius-button" onClick={() => void submit()} disabled={busy}>
+          {busy ? "Saving…" : "Save availability and preferences"}
         </button>
-      </div>
-    </>
-  );
-}
-
-type Preference = Window & { kind: "prefer" | "avoid" };
-
-const AVAILABLE_KIND: CalKind<"available">[] = [{ id: "available", label: "Available", className: "cal-available" }];
-const PREFERENCE_KINDS: CalKind<Preference["kind"]>[] = [
-  { id: "prefer", label: "Prefers", className: "cal-prefer" },
-  { id: "avoid", label: "Avoids", className: "cal-avoid" },
-];
-
-function PreferencesEditor({ employee, save }: { employee: Employee; save: (p: Preference[]) => Promise<void> }) {
-  const [prefs, setPrefs] = useState<Preference[]>(employee.preferences);
-  return (
-    <>
-      <WeekCalendar
-        value={prefs}
-        onChange={setPrefs}
-        kinds={PREFERENCE_KINDS}
-        backdrop={employee.availability.at(-1)?.windows ?? []}
-        backdropLabel="Available (latest saved pattern)"
-      />
-      <div className="radius-actions">
-        <button type="button" className="radius-button" onClick={() => void save(prefs)}>
-          Save preferences
-        </button>
+        {status && <span className="radius-note">{status}</span>}
       </div>
     </>
   );
