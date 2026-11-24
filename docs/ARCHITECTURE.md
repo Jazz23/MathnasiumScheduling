@@ -40,7 +40,7 @@ Sign-ins go through the account's AccountLock (Durable Object, worker/accountLoc
 ```
 
 Workers Static Assets serves the built app (`dist/client/`), with single-page-app fallback. Only
-`/api/*`, `/radius/*` and `/sling/*` run the Worker (`run_worker_first` in `wrangler.jsonc`).
+`/api/*`, `/radius/*`, `/sling/*` and `/signalr/*` run the Worker (`run_worker_first` in `wrangler.jsonc`).
 
 ### Routes
 
@@ -146,7 +146,9 @@ its own origin.
 - Responses lose `Set-Cookie`, `X-Frame-Options`, content security policy and HSTS headers.
   Redirects are rewritten to stay under `/radius/`. Requests get Radius' own `Origin` and `Referer`,
   because some Radius endpoints check them.
-- Radius' live updates (SignalR websockets) can't be proxied this way and don't connect.
+- Radius' live updates (SignalR websockets) can't be proxied this way. They arrive at `/signalr/*`,
+  where the Worker answers 404, so SignalR falls back to long polling through the proxy. (Left to the
+  static assets, the upgrade reaches Vite's middleware in dev, which crashes Miniflare.)
 
 **Sling** (`worker/sling.ts`, shown by `src/SlingPanel.tsx`):
 

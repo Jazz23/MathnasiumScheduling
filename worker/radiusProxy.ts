@@ -15,7 +15,9 @@
 //     frontend) catches every other same-origin request a proxied page makes
 //     (XHR, fetch, images, CSS url()) and prefixes /radius. Synchronous XHRs
 //     bypass service workers, so pages also get XMLHttpRequest.open patched.
-// WebSockets (SignalR) can't be intercepted that way and won't connect.
+// WebSockets (SignalR) can't be intercepted that way: they arrive at
+// /signalr/*, where the Worker turns them down (worker/index.ts) and SignalR
+// falls back to long polling through the proxy.
 
 import type { Env } from "./env";
 import { getSessionAccount } from "./auth";
