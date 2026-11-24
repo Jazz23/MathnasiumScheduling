@@ -199,6 +199,40 @@ async function refreshToken(env: Env, accountId: number, since: number): Promise
   return row.sling_token;
 }
 
+/**
+ * GETs a Sling API path (e.g. "/v1/users/concise") as the account and returns
+ * the parsed JSON. Signs in again (through the AccountLock) if the token has
+ * expired. Throws if Sling isn't linked or answers with an error.
+ */
+export async function slingGet<T>(env: Env, accountId: number, path: string): Promise<T> {
+  const row = await getRow(env, accountId);
+  if (!row) throw new SlingLoginError("Sling isn't linked");
+  const send = (token: string) =>
+    fetch(API_ORIGIN + path, {
+      headers: { Authorization: token, Accept: "application/json", "User-Agent": USER_AGENT },
+    });
+  const sentAt = Date.now();
+  let token = row.sling_token ?? (await refreshToken(env, accountId, sentAt));
+  let res = await send(token);
+  if (res.status === 401) {
+    token = await refreshToken(env, accountId, sentAt);
+    res = await send(token);
+  }
+  const fresh = res.headers.get("Authorization");
+  if (fresh && fresh !== token) await saveToken(env, accountId, fresh);
+  if (!res.ok) throw new Error(`Sling GET ${path.split("?")[0]} answered HTTP ${res.status}`);
+  return (await res.json()) as T;
+}
+
+/** The linked Sling account's organization ID and user ID. */
+export async function slingIdentity(env: Env, accountId: number): Promise<{ orgId: number; userId: number }> {
+  const session = await slingGet<{ user?: { id?: unknown }; org?: { id?: unknown } }>(env, accountId, "/v1/account/session");
+  const userId = session.user?.id;
+  const orgId = session.org?.id;
+  if (typeof userId !== "number" || typeof orgId !== "number") throw new Error("Unexpected Sling session");
+  return { orgId, userId };
+}
+
 // --------------------------------------------------------------- /api/sling
 
 const json = (body: unknown, status = 200) => Response.json(body, { status });

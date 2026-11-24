@@ -1,6 +1,18 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { CenterSetup } from "./CenterSetup";
+import { DemandView } from "./DemandView";
 import { RadiusSchedule } from "./RadiusSchedule";
+import { Roster } from "./Roster";
 import { SlingPanel } from "./SlingPanel";
+
+const TABS = [
+  { id: "demand", label: "Demand", render: () => <DemandView /> },
+  { id: "center", label: "Center", render: () => <CenterSetup /> },
+  { id: "roster", label: "Roster", render: () => <Roster /> },
+  { id: "radius", label: "Radius", render: () => <RadiusSchedule /> },
+  { id: "sling", label: "Sling", render: () => <SlingPanel /> },
+] as const;
+type TabId = (typeof TABS)[number]["id"];
 
 type Status = { state: "loading" } | { state: "signed-out" } | { state: "signed-in"; username: string };
 
@@ -14,7 +26,14 @@ export function RadiusLogin() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [tab, setTab] = useState<"radius" | "sling">("radius");
+  const [tab, setTab] = useState<TabId>("demand");
+  // Tabs mount the first time they're opened (the Demand tab reads Radius and
+  // Sling), then stay mounted so switching keeps each one's state.
+  const [opened, setOpened] = useState<Set<TabId>>(() => new Set(["demand"]));
+  const openTab = (id: TabId) => {
+    setTab(id);
+    setOpened((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
+  };
 
   useEffect(() => {
     fetch("/api/auth/me")
@@ -73,20 +92,20 @@ export function RadiusLogin() {
           </div>
         </header>
         <nav className="tabs" role="tablist">
-          <button type="button" role="tab" aria-selected={tab === "radius"} onClick={() => setTab("radius")}>
-            Radius
-          </button>
-          <button type="button" role="tab" aria-selected={tab === "sling"} onClick={() => setTab("sling")}>
-            Sling
-          </button>
+          {TABS.map((t) => (
+            <button key={t.id} type="button" role="tab" aria-selected={tab === t.id} onClick={() => openTab(t.id)}>
+              {t.label}
+            </button>
+          ))}
         </nav>
-        {/* Both stay mounted so switching tabs keeps each one's page and state. */}
-        <div className="tab-panel" hidden={tab !== "radius"}>
-          <RadiusSchedule />
-        </div>
-        <div className="tab-panel" hidden={tab !== "sling"}>
-          <SlingPanel />
-        </div>
+        {TABS.map(
+          (t) =>
+            opened.has(t.id) && (
+              <div key={t.id} className="tab-panel" hidden={tab !== t.id}>
+                {t.render()}
+              </div>
+            ),
+        )}
       </div>
     );
   }

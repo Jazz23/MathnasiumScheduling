@@ -7,6 +7,9 @@ import type { Env } from "./env";
 import { handleAuth } from "./auth";
 import { handleRadiusProxy } from "./radiusProxy";
 import { handleSling } from "./sling";
+import { handleDemand } from "./demandApi";
+import { handleRoster } from "./roster";
+import { handleSetup } from "./setup";
 
 export type { Env };
 // Classes the runtime loads by name (see wrangler.jsonc).
@@ -28,6 +31,9 @@ export default {
       const response = await handleAuth(request, env, pathname);
       if (response) return response;
     }
+
+    const api = (await handleDemand(request, env, url)) ?? (await handleSetup(request, env, pathname)) ?? (await handleRoster(request, env, pathname));
+    if (api) return api;
 
     if (pathname === "/api/db/health") {
       const row = await env.DB.prepare("SELECT 1 AS ok").first<{ ok: number }>();

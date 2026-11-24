@@ -147,3 +147,174 @@ body {
   align-items: center;
   gap: 0.5rem;
 }
+
+/* Demand, Center and Roster tabs */
+.page {
+  flex: 1;
+  overflow: auto;
+  padding: 0.75rem 16px 2rem;
+  text-align: left;
+}
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+.toolbar button {
+  padding: 0.3rem 0.8rem;
+}
+.legend {
+  margin: 0.5rem 0;
+}
+.grid-scroll {
+  overflow-x: auto;
+  margin-bottom: 1rem;
+}
+.demand-grid {
+  border-collapse: collapse;
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+.demand-grid th,
+.demand-grid td {
+  padding: 0.1rem 0.5rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  white-space: nowrap;
+}
+.demand-grid tbody th {
+  text-align: right;
+  font-weight: normal;
+  opacity: 0.7;
+}
+.demand-grid td {
+  min-width: 6.5rem;
+  text-align: center;
+}
+.demand-grid td.closed {
+  background: rgba(255, 255, 255, 0.04);
+  opacity: 0.6;
+}
+.demand-grid td.short {
+  background: rgba(210, 38, 48, 0.35);
+}
+.plain-list {
+  margin: 0.25rem 0 0.75rem;
+  padding-left: 1.25rem;
+  font-size: 0.85rem;
+}
+details summary {
+  cursor: pointer;
+  margin: 0.5rem 0;
+}
+.panel {
+  max-width: 960px;
+  margin-bottom: 1.5rem;
+  padding: 1rem 1.25rem;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.05);
+}
+.panel h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1.2rem;
+}
+.panel h3 {
+  margin: 1.25rem 0 0.25rem;
+  font-size: 1rem;
+}
+.subpanel {
+  padding: 0.75rem 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  margin-bottom: 0.75rem;
+}
+.subpanel h4 {
+  margin: 0.5rem 0 0.25rem;
+}
+.fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 16rem), 1fr));
+  gap: 0.75rem 1rem;
+  margin: 0.5rem 0 1rem;
+}
+.fields label,
+label.block {
+  display: grid;
+  gap: 0.25rem;
+  align-content: start;
+}
+.page input,
+.page select,
+.page textarea {
+  font: inherit;
+  padding: 0.35rem 0.5rem;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(0, 0, 0, 0.2);
+  color: inherit;
+}
+.page input[type="checkbox"] {
+  padding: 0;
+}
+.checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.25rem;
+  margin-bottom: 0.75rem;
+}
+label.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-right: 0.75rem;
+}
+fieldset {
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  margin: 0 0 0.75rem;
+}
+.windows {
+  display: grid;
+  gap: 0.4rem;
+  margin-bottom: 0.75rem;
+}
+.window-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+.link-button {
+  background: none;
+  border: none;
+  color: #ff8a8f;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.roster {
+  border-collapse: collapse;
+  width: 100%;
+  max-width: 960px;
+  margin-bottom: 1rem;
+  font-size: 0.9rem;
+}
+.roster th,
+.roster td {
+  text-align: left;
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+.roster tbody tr {
+  cursor: pointer;
+}
+.roster tr.selected {
+  background: rgba(210, 38, 48, 0.15);
+}
+.roster tr.muted {
+  opacity: 0.55;
+}
+.warn {
+  color: #ffb36b;
+}

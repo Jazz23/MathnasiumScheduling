@@ -85,6 +85,18 @@ far.
 
 This gives the Worker signed-in access to both Radius and Sling, which every feature below builds on.
 
+Also built (2026-11-24), phases 1 and 2:
+
+- **Demand tab**: booked demand per 15-minute block for a week, from Radius' appointments, levels
+  and ratios, next to the people on Sling's schedule at the center. It also lists the week's time
+  off and Sling shifts.
+- **Center tab**: center setup (feature 1): opening hours, presence, shift and break rules, cadence,
+  the Sling locations for the center and remote shifts, and the school programs with their
+  sessions, instructors needed and drive time.
+- **Roster tab**: the roster imported from Sling (feature 2), each person's details, and their
+  availability and preferences (feature 3). Availability can be filled in from the shifts each
+  person worked in Sling over the last 8 weeks.
+
 ## Features
 
 ### 1. Center setup
@@ -343,8 +355,8 @@ minutes of CPU and 128 MB of memory. A greedy heuristic stays the fallback.
 - Store the Sling ID of every shift the app creates. Publishing again updates or removes those shifts
   instead of duplicating them. The app never changes shifts it didn't create.
 - **Existing repeating shifts**: most of today's schedule is hand-made repeating shifts in Sling
-  (weekly, many ending in mid-December 2026). The app won't touch them, so a draft has to either
-  treat them as fixed (like locked shifts) or wait until they end. See open question 26.
+  (weekly, many ending in mid-December 2026). The app won't touch them. Drafts treat them as fixed,
+  like locked shifts, and schedule around them (decided 2026-11-24).
 - Sling notifies employees of their new shifts on its own once the director publishes them there.
 
 ### 9. Automation
@@ -593,9 +605,9 @@ NeemaJ/MathnasiumCalendarExpander). The ones marked confirmed were called while 
 
 | Path | What it has | Use |
 | --- | --- | --- |
-| `POST /AppointmentManagement/GetAppointments` (confirmed) | Appointments for a date range (`startDate`, `endDate` as `yyyy-MM-dd`; filters `deliveryMethod` = `online` or `in_center`, `sessionTypes`, `gradeRanges`, `sessionStatuses`). Each has student ID, date, time, `SessionDuration` in minutes, `SessionType` (Standard, HighSchool, Great Foundations, Private, or the membership name), `SessionStatus` (Scheduled, Attended, Drop-In, Cancelled, Late cancelled, No show), `DeliveryMethod` ("In-Center" or "Online"), `Grade` ("Pre K", "K", "1"–"12", "College") and `PodLabel`. | Booked demand (feature 4), unbooked visits and no-shows (feature 5). |
-| `GET /Scheduling/CalendarData?centerKey=3600\|False\|False&date=yyyy-MM-dd` (confirmed) | One day of the scheduling calendar. `CalendarItems`: each appointment's start and end time, `SessionType`, `DeliveryType` (`in_center`), status and pod. `Seats`: for each 15-minute slot, seats booked in-center and online and seats still free. Also the day's opening hours and the maximum physical and online seats. | Booked demand for one day. Radius' free seats for the booking assistant. |
-| `/Membership/CenterSettings/{centerId}` (confirmed, a page) | The center's levels, embedded in the page as JSON (`radius.utilities.levels`): name, first and last grade (Pre K = 13, K = 14), `InCenterRatio`, `OnlineRatio` and `SessionTypeId`. | The ratio and the grade-to-level mapping (features 1 and 4). |
+| `POST /AppointmentManagement/GetAppointments` (confirmed, used by `worker/radiusData.ts`) | Appointments for a date range. Body (form-encoded, with `X-Requested-With: XMLHttpRequest`): `__RequestVerificationToken` (any page's hidden input), `sort`, `page`, `pageSize` (1000 works; a week is about 60–100), `group`, `filter` (all empty), `startDate` and `endDate` as `yyyy-MM-dd`, `appointmentDateType=0` (by appointment date), `isSearchAction=true`; optional filters `deliveryMethod` = `online` or `in_center`, `sessionTypes`, `gradeRanges`, `sessionStatuses`. No center ID needed. Records also have `AppointmentDateString` (`11/30/2026`) and `AppointmentTimeString` (`1:30 PM`) in center time, but no appointment or enrollment ID. Each has student ID, date, time, `SessionDuration` in minutes, `SessionType` (Standard, HighSchool, Great Foundations, Private, or the membership name), `SessionStatus` (Scheduled, Attended, Drop-In, Cancelled, Late cancelled, No show), `DeliveryMethod` ("In-Center" or "Online"), `Grade` ("Pre K", "K", "1"–"12", "College") and `PodLabel`. | Booked demand (feature 4), unbooked visits and no-shows (feature 5). |
+| `GET /Scheduling/CalendarData?centerKey=3600\|False\|False&date=yyyy-MM-dd` (confirmed) | One day of the scheduling calendar. `CalendarItems`: each appointment's start and end time, `SessionType`, `DeliveryType` (`in_center`), status and pod. `Seats`: for each 15-minute slot, seats booked in-center and online and seats still free. Also `CalendarStartTime`/`CalendarEndTime` (the day's opening hours, e.g. `13:00`–`18:00`), `MaxPhysicalSeats`, `MaxOnlineSeats` and `SchedulingIntervalMinutes` (30). Unlike Appointment Management, each item has `AppointmentId`, `EnrollmentId`, `IsRecurring`, `RecurrenceEndDate` and `EnrollmentTypeDescription`: the way to spot recurring appointments from ended enrollments. | Booked demand for one day. Radius' free seats for the booking assistant. |
+| `/Membership/CenterSettings/{centerId}` (confirmed, a page, used by `worker/radiusData.ts`) | The center's levels, embedded in the page as `radius.utilities.levels.push({...});` calls, one per level: name, first and last grade (Pre K = 13, K = 14), `InCenterRatio`, `OnlineRatio` and `SessionTypeId`. | The ratio and the grade-to-level mapping (features 1 and 4). |
 | `GET /CenterAvailability/GetDefaultCapacity?centerId=&isVirtual=false` (confirmed) | Radius' booking capacity: maximum physical and online seats, and groups of days and hours with a number of instructors per session type. | Comparing Radius' capacity with the schedule (feature 1). |
 | `POST /StudentAttendanceReport/StudentAttendanceReport_Read` (confirmed) | The Student Attendance Report's visits: one row per visit with student ID, enrollment ID, date, arrival, departure, `DurationInMinutes`, `Delivery` ("In-Center" or "Hybrid") and `DeliveryText` ("In-Center" or "@home"), membership type, `SessionsPerMonth` and `SessionsRemaining`. Body: `start` and `end` as `MM/dd/yyyy 12:00:00 AM`, `centerId`, `schoolPartnership=2` (all), and empty `membershipTypeList`, `selectStudent`, `delivery` and `ctrIds`. No instructor. | Visit history (feature 5). |
 | `POST /StudentAttendanceMonthlyReport/StudentAttendanceMonthlyReport_Read` | The same report's month-by-month summary per student. Same parameters, not called yet. | Not needed yet. |
@@ -646,8 +658,8 @@ records let its accuracy be checked against past weeks right away.
 | Phase | Scope | Status |
 | --- | --- | --- |
 | 0. Foundations | Login with Radius, link Sling, embedded views, Cloudflare + D1 setup | Done |
-| 1. Read the data | Groundwork: generated types, staging environment, a Durable Object sign-in lock per account, Sling sign-in moved into a Workflow. Then read Radius appointments (with student levels, and whether each is online) and the ratio, and the Sling roster, locations, time off and existing shifts. Show booked demand per time block in the app. | In progress: groundwork built 2026-11-23 (staging still needs its D1 database). Reading the data is next. |
-| 2. Setup | Center setup (hours, presence rules, school programs, the Remote location). Roster details: roles, levels, teaching limits, preferred programs, remote work, work-from-home days, hour preferences. Availability for each employee, suggested from past Sling shifts. | Planned |
+| 1. Read the data | Groundwork: generated types, staging environment, a Durable Object sign-in lock per account, Sling sign-in moved into a Workflow. Then read Radius appointments (with student levels, and whether each is online) and the ratio, and the Sling roster, locations, time off and existing shifts. Show booked demand per time block in the app. | Built 2026-11-24 (staging still needs its D1 database). Not yet: flagging appointments left over from ended enrollments. |
+| 2. Setup | Center setup (hours, presence rules, school programs, the Remote location). Roster details: roles, levels, teaching limits, preferred programs, remote work, work-from-home days, hour preferences. Availability for each employee, suggested from past Sling shifts. | Built 2026-11-24 |
 | 3. Generate drafts | Switch to Workers Paid for the scheduler's CPU time. Scheduler v1 (heuristic) with the coverage report. No publishing yet. | Planned |
 | 4. Review and edit | Calendar view of the draft, manual edits, locking, regenerate around locks. | Planned |
 | 5. Publish | Create, update and remove the app's shifts in Sling. | Planned |
@@ -712,6 +724,7 @@ Answered questions are kept, struck through, with their answers.
 7. ~~Should the app publish shifts straight to employees, or leave them unpublished in Sling for a
    final check there?~~ Answered 2026-11-24: leave them unpublished for now (feature 8).
 8. How should the app notify the director: email (needs a domain to send from), or something else?
+   Deferred (2026-11-24).
 9. ~~Besides instructors, which roles need scheduling?~~ Answered 2026-11-24: any employee can be
    scheduled.
 10. Is a heuristic scheduler good enough, or is an optimization solver needed, and does one fit in
@@ -738,8 +751,8 @@ Answered questions are kept, struck through, with their answers.
 15. For the Valencia and Rio del Mar programs: which days and times, how many instructors, are they in
     Radius or Sling already, and how long is the drive from the center? Answered 2026-11-24 except the
     drive: both are Sling locations (days and times in "Sling endpoints found so far"), they're not in
-    Radius, and Valencia needs 2 instructors, Rio del Mar 3. Still open: the drive time from the
-    center to each.
+    Radius, and Valencia needs 2 instructors, Rio del Mar 3. The drive is 10 minutes to Valencia and
+    15 to Rio del Mar (answered 2026-11-24). Entered in the Center tab.
 16. ~~Are breaks paid or unpaid, and should the scheduler aim for a third person whenever someone is
     due a break?~~ Answered 2026-11-24: paid. No third person: two people on, one of them on a
     break, is fine.
@@ -771,13 +784,10 @@ Answered questions are kept, struck through, with their answers.
     work. The center is open on Sundays.
 25. ~~Where does availability come from, since this center's Sling plan doesn't have it?~~ Answered
     2026-11-24: it's built into the app (feature 3).
-26. What happens to the hand-made repeating shifts already in Sling? The app can treat them as fixed
-    and schedule around them, or the director can let them end and have the app take over those
-    times.
-27. Should the app keep Radius' booking capacity in line with each week's schedule? Radius lets a
-    single week's capacity be edited without changing the default, so the app could set each week's
-    instructors per time from the published schedule. Parents would then only see times that are
-    really staffed. It would be a second kind of write to Radius, after booking.
+26. ~~What happens to the hand-made repeating shifts already in Sling?~~ Answered 2026-11-24:
+    schedule around them, as fixed shifts.
+27. ~~Should the app keep Radius' booking capacity in line with each week's schedule?~~ Answered
+    2026-11-24: not for now. The app doesn't touch Radius' capacity.
 28. ~~Is this center set up as a Scheduling Center (the myMathnasium integrated scheduler), and are
     any pods or groups used in Default capacity?~~ Answered 2026-11-24: it uses myMathnasium's
     scheduler, and it doesn't use pods, so capacity is just the default capacity rows.

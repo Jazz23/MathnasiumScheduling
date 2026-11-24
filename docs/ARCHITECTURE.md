@@ -31,6 +31,8 @@ or built, record it here and update the plan to match.
 ```
 Browser ──> Worker (worker/index.ts)
               ├─ /api/auth/*, /api/sling ──> D1 (accounts, sessions, stored logins)
+              ├─ /api/setup/*, /api/roster/* ──> D1 (center setup, roster) + Sling reads
+              ├─ /api/demand ──> Radius reads + Sling reads + D1
               ├─ /radius/*   ── signed-in proxy ──> radius.mathnasium.com
               ├─ /sling/*    ── proxy ───────────> app.getsling.com
               ├─ /sling/__api/* ── adds token ───> api.getsling.com
@@ -59,6 +61,17 @@ Workers Static Assets serves the built app (`dist/client/`), with single-page-ap
 | `/sling/*` | `worker/sling.ts` | Sling's web app files. |
 | `/sling/__api/*` | `worker/sling.ts` | Sling's API, with the stored token added. |
 | `/radius/__proxy-sw.js`, `/sling/__proxy-sw.js` | the proxy files | Service workers for the embedded views (see below). |
+| `GET /api/demand?start=&days=` | `worker/demandApi.ts` | Booked demand per 15-minute block for up to 14 days, with the people on Sling's schedule, time off and shifts. |
+| `GET /api/setup` | `worker/setup.ts` | Center settings, opening hours and school programs. |
+| `PUT /api/setup/center` | `worker/setup.ts` | Saves the settings and replaces the opening hours. |
+| `GET /api/setup/sling-groups` | `worker/setup.ts` | Sling's locations and positions, for mapping. |
+| `POST /api/setup/programs`, `PUT`, `DELETE /api/setup/programs/:id` | `worker/setup.ts` | School programs and their sessions. |
+| `GET /api/roster` | `worker/roster.ts` | Everyone on the roster, with programs, availability and preferences. |
+| `POST /api/roster/sync` | `worker/roster.ts` | Imports people from Sling. |
+| `PUT /api/roster/:slingUserId` | `worker/roster.ts` | Saves a person's details and preferred programs. |
+| `PUT /api/roster/:slingUserId/availability` | `worker/roster.ts` | Replaces one availability pattern (`effectiveFrom` and its windows). |
+| `PUT /api/roster/:slingUserId/preferences` | `worker/roster.ts` | Replaces a person's prefer/avoid times. |
+| `GET /api/roster/availability-suggestions?weeks=` | `worker/roster.ts` | Each person's usual times from their past Sling shifts. |
 | `GET /api/db/health` | `worker/index.ts` | Checks D1. |
 
 Any other `/api/*` path returns 404 as JSON.
@@ -119,6 +132,46 @@ sign-in after a restart.
 Sling sits behind Cloudflare's bot protection, which rejects requests without a browser-like
 `User-Agent`, so the Worker sends one.
 
+## Reading Radius and Sling
+
+The scheduler's data comes from two modules, and nothing else calls Radius or Sling for data:
+
+- **`worker/radiusData.ts`**: Radius' levels and ratios (parsed from the Center Settings page,
+  where they're embedded as `radius.utilities.levels.push({...})` calls) and appointments (the
+  Appointment Management grid's data request). Radius' POSTs need an anti-forgery token from any
+  page, so the levels page load also provides the token. If a POST comes back as an error page (the
+  session was renewed and the token went stale), it loads the page again and retries once. Dates
+  and times are read from Radius' ready-made local strings, so no time zone conversion is needed.
+- **`worker/slingData.ts`**: people and groups (`/v1/users/concise`), and the calendar of shifts and
+  time off (`/v1/calendar/{org}/users/{user}`, which returns everyone's for an admin). Calls go
+  through `slingGet()` in `worker/sling.ts`, which uses the stored token and signs in again when it
+  expires, like the proxy.
+
+Both check the shapes they get back and throw on anything unexpected, rather than guessing.
+
+**Demand** (`worker/demand.ts`) is pure: it turns appointments and levels into students and
+instructors needed per block. An appointment counts if it's scheduled, attended or a drop-in, in
+every 15-minute block it overlaps, at its level's in-center or online ratio. Grades map to levels
+through Radius' grade ranges (Pre K = -1, K = 0, College counts as 12). The Demand tab reads
+Radius and Sling fresh on each load, two requests each, with nothing cached. That stays well within
+Radius' rate limit for one director.
+
+## Center setup and roster
+
+Everything Radius and Sling don't hold is in D1 (migration `0003_center_setup.sql`):
+
+- **Center setup**: one settings row, opening hours, and school programs with their weekly
+  sessions. Settings cover the presence rules, shift and break rules, travel, cadence and which
+  Sling locations are the center and remote work.
+- **Roster**: one row per Sling user. `POST /api/roster/sync` adds active Sling users who aren't on
+  the roster, guessing their role from their Sling positions, and refreshes everyone's name, email,
+  positions and active flag. The director's details are never overwritten.
+- **Availability**: weekly windows with a starting date. All windows with the same `effective_from`
+  form one pattern; the pattern in force on a date is the latest one starting on or before it. The
+  suggestions merge the shifts each person worked on each weekday over the last 8 weeks, at any
+  location, read four weeks per Sling request.
+- Supervisors are the owner and assistant center directors (`SUPERVISOR_ROLES`).
+
 ## Stored credentials
 
 - Radius and Sling passwords are encrypted with AES-GCM using a 256-bit key, `RADIUS_CREDENTIAL_KEY`
@@ -162,8 +215,11 @@ its own origin.
   does the same job as the Radius one.
 - Sling's realtime socket isn't proxied, so changes made elsewhere only show after a reload.
 
-**Frontend**: `src/App.tsx` renders `src/RadiusLogin.tsx`, which shows the login form, then tabs for
-the Radius schedule and the Sling panel. The Sling panel links Sling, then shows Sling's app.
+**Frontend**: `src/App.tsx` renders `src/RadiusLogin.tsx`, which shows the login form, then tabs:
+Demand (`src/DemandView.tsx`), Center (`src/CenterSetup.tsx`), Roster (`src/Roster.tsx`), the Radius
+schedule and the Sling panel. A tab mounts the first time it's opened and then stays mounted. The
+Sling panel links Sling, then shows Sling's app. `src/api.ts` has the API client and the response
+shapes, which have to be kept in step with the Worker's.
 
 ## Database
 
@@ -175,6 +231,13 @@ D1 database `mathnasium-scheduling`. Schema changes are migrations in `migration
 | `radius_accounts` | One row per app account: Radius username, encrypted password and IV, current Radius cookies. |
 | `sessions` | App sessions: SHA-256 hash of the session token, account, expiry. |
 | `sling_accounts` | One Sling link per app account: email, encrypted password and IV, current token, organization ID. |
+| `center_settings` | One row: Radius center ID, time zone, presence, shift and break rules, travel, cadence, Sling location mapping. |
+| `operating_hours` | Opening hours per weekday; a weekday without rows is closed. |
+| `school_programs`, `program_sessions` | Off-site programs: Sling location, instructors needed, drive time; their weekly sessions. |
+| `employees` | The roster, keyed by Sling user ID: role, highest grade, qualifications, teaching limit, remote work, priority, hours, work-from-home days. |
+| `employee_programs` | Programs a person is first choice for. |
+| `availability` | Weekly availability windows, grouped into patterns by starting date. |
+| `employee_preferences` | Times a person prefers or avoids. |
 
 Deleting an account deletes its sessions and Sling link (foreign keys with `ON DELETE CASCADE`).
 
