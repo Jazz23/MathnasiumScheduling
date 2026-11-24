@@ -729,7 +729,9 @@ Answered questions are kept, struck through, with their answers.
    scheduled.
 10. Is a heuristic scheduler good enough, or is an optimization solver needed, and does one fit in
     Workers? Partly answered 2026-11-24: HiGHS runs in Workers and solves a synthetic week in about a
-    second (feature 6, `spikes/highs/`). Still open: a deployed run, and choosing it. The week is small: about 8 employees, 6 open days of roughly 28 15-minute blocks, and
+    second (feature 6, `spikes/highs/`). Deployed on the Free plan, it deploys but the solve is
+    stopped at Free's 10 ms of CPU, confirming phase 3 needs Workers Paid. Still open: a deployed
+    run on Paid, and choosing it. The week is small: about 8 employees, 6 open days of roughly 28 15-minute blocks, and
     3 places to work. The hard part is how the rules interact (a supervisor and two people on site,
     levels, Carol's teaching limit, minimum shift lengths, locked shifts, preferred hours). A greedy
     heuristic fills one block at a time and can paint itself into a corner; it needs repair passes

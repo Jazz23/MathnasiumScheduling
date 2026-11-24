@@ -43,5 +43,7 @@ Findings:
   `instantiateWasm` hook instead.
 - Write shifts in the compact form. Listing every possible shift used more memory than Workers'
   128 MB and ran slower.
-- Not checked yet: a deployed run. Local workerd doesn't enforce Workers' CPU or memory limits, and
-  about a second of CPU needs Workers Paid (the Free plan allows 10 ms).
+- Deployed on the Free plan (2026-11-24): the upload is accepted (4.1 MB, 1.38 MB gzipped, 40 ms
+  startup), but a solve fails with "Worker exceeded resource limits" (10 ms of CPU). Free also
+  rejects the `limits.cpu_ms` setting. So the scheduler needs Workers Paid. Not checked yet: a
+  deployed run on Paid.
