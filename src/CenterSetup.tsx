@@ -1,9 +1,14 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api, WEEKDAYS, type CenterSettings, type SchoolProgram, type Setup, type SlingGroups, type Window } from "./api";
-import { WindowsEditor } from "./WindowsEditor";
+import { WeekCalendar, type CalKind } from "./WeekCalendar";
 
 // Center setup (feature 1): hours, presence and shift rules, Sling locations,
 // and the school programs.
+const OPEN_KIND: CalKind<"open">[] = [{ id: "open", label: "Open", className: "cal-available" }];
+const SESSION_KIND: CalKind<"session">[] = [{ id: "session", label: "Session", className: "cal-prefer" }];
+const withKind = <K extends string>(windows: Window[], kind: K) => windows.map((w) => ({ ...w, kind }));
+const stripKind = (windows: Window[]): Window[] => windows.map(({ weekday, start, end }) => ({ weekday, start, end }));
+
 export function CenterSetup() {
   const [setup, setSetup] = useState<Setup | null>(null);
   const [groups, setGroups] = useState<SlingGroups | null>(null);
@@ -19,7 +24,12 @@ export function CenterSetup() {
   return (
     <div className="page">
       <CenterForm setup={setup} groups={groups} onSaved={setSetup} />
-      <Programs programs={setup.programs} groups={groups} onSaved={setSetup} />
+      <Programs
+        programs={setup.programs}
+        hours={setup.hours.map((h) => ({ weekday: h.weekday, start: h.open, end: h.close }))}
+        groups={groups}
+        onSaved={setSetup}
+      />
     </div>
   );
 }
@@ -81,7 +91,7 @@ function CenterForm({ setup, groups, onSaved }: { setup: Setup; groups: SlingGro
       <h2>Center</h2>
       <h3>Opening hours</h3>
       <p className="radius-note">Days without hours are closed.</p>
-      <WindowsEditor value={hours} onChange={setHours} blank={{ weekday: 1, start: "13:00", end: "18:00" }} addLabel="Add hours" />
+      <WeekCalendar value={withKind(hours, "open")} onChange={(next) => setHours(stripKind(next))} kinds={OPEN_KIND} />
 
       <h3>Rules</h3>
       <div className="fields">
@@ -143,17 +153,28 @@ const NEW_PROGRAM: Omit<SchoolProgram, "id"> = {
   sessions: [],
 };
 
-function Programs({ programs, groups, onSaved }: { programs: SchoolProgram[]; groups: SlingGroups | null; onSaved: (s: Setup) => void }) {
+function Programs({
+  programs,
+  hours,
+  groups,
+  onSaved,
+}: {
+  programs: SchoolProgram[];
+  hours: Window[];
+  groups: SlingGroups | null;
+  onSaved: (s: Setup) => void;
+}) {
   const [adding, setAdding] = useState(false);
   return (
     <section className="panel">
       <h2>School programs</h2>
       {programs.map((p) => (
-        <ProgramForm key={p.id} program={p} groups={groups} onSaved={onSaved} />
+        <ProgramForm key={p.id} program={p} hours={hours} groups={groups} onSaved={onSaved} />
       ))}
       {adding ? (
         <ProgramForm
           program={NEW_PROGRAM}
+          hours={hours}
           groups={groups}
           onSaved={(s) => {
             setAdding(false);
@@ -172,11 +193,13 @@ function Programs({ programs, groups, onSaved }: { programs: SchoolProgram[]; gr
 
 function ProgramForm({
   program,
+  hours,
   groups,
   onSaved,
   onCancel,
 }: {
   program: Omit<SchoolProgram, "id"> & { id?: number };
+  hours: Window[];
   groups: SlingGroups | null;
   onSaved: (s: Setup) => void;
   onCancel?: () => void;
@@ -235,11 +258,12 @@ function ProgramForm({
         </label>
       </div>
       <h4>Sessions</h4>
-      <WindowsEditor
-        value={p.sessions}
-        onChange={(sessions) => setP({ ...p, sessions })}
-        blank={{ weekday: 1, start: "14:15", end: "15:45" }}
-        addLabel="Add session"
+      <WeekCalendar
+        value={withKind(p.sessions, "session")}
+        onChange={(next) => setP({ ...p, sessions: stripKind(next) })}
+        kinds={SESSION_KIND}
+        backdrop={hours}
+        backdropLabel="Center open"
       />
       <div className="radius-actions">
         <button type="submit" className="radius-button">

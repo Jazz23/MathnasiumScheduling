@@ -273,17 +273,6 @@ fieldset {
   border-radius: 8px;
   margin: 0 0 0.75rem;
 }
-.windows {
-  display: grid;
-  gap: 0.4rem;
-  margin-bottom: 0.75rem;
-}
-.window-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.4rem;
-}
 .link-button {
   background: none;
   border: none;
