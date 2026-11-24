@@ -1,0 +1,15 @@
+{
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "highs-spike",
+      "dependencies": {
+        "highs": "1.16.0",
+      },
+    },
+  },
+  "packages": {
+    "highs": ["highs@1.16.0", "", {}, "sha512-Xo6becljpv6y1lYKwAOtqv6YDtCKxXWk/84Ik5dnol2BBqNv3T4wShd93a9Tv6vdMoY9Pn8y4zJ5yj3idRrY4g=="],
+  }
+}

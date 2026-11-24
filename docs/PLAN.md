@@ -310,10 +310,12 @@ Builds a draft from the demand, the employees' availability and preferences, and
   "nobody available Tue 6:30–7:00 pm"). It also lists breaks that couldn't fit.
 - For each employee: scheduled hours vs. preferred hours, and which preferences couldn't be met.
 
-**Approach:** start with a greedy heuristic in TypeScript. Move to an optimization solver (integer
-programming or constraint programming, compiled to WebAssembly) only if the heuristic's schedules
-aren't good enough. Either way it runs in a Workflow step, so it has to fit in up to 5 minutes of CPU
-and 128 MB of memory.
+**Approach (proposed 2026-11-24):** an integer program solved with HiGHS (npm `highs`), instead of
+starting with a greedy heuristic. A test on a synthetic week (`spikes/highs/`) solved it to the
+optimum in about a second, in the Workers runtime, using 44 MB. Shifts have to be written in the
+compact form (working or not per person and block, plus where each shift starts): listing every
+possible shift went over Workers' 128 MB. It runs in a Workflow step, so it has to fit in up to 5
+minutes of CPU and 128 MB of memory. A greedy heuristic stays the fallback.
 
 ### 7. Review and edit
 
@@ -561,8 +563,10 @@ record each one in `docs/ARCHITECTURE.md` once it's made.
 
 **To verify early:**
 
-- Whether a WebAssembly solver (for example HiGHS) runs in Workers and solves a real week within the
-  limits. Only needed if the heuristic isn't good enough.
+- ~~Whether a WebAssembly solver (for example HiGHS) runs in Workers and solves a real week within
+  the limits.~~ Tested 2026-11-24 in local workerd (see `spikes/highs/README.md`): yes, about a
+  second and 44 MB for a synthetic week. Still to check in a deployed Worker, where the CPU and
+  memory limits apply.
 - Email Service onboarding: the daily quota for new accounts, and what the sending domain needs.
 - Whether the pinned Wrangler version can schedule Workflows directly (a newer feature), or whether a
   Cron Trigger has to start them.
@@ -711,7 +715,8 @@ Answered questions are kept, struck through, with their answers.
 9. ~~Besides instructors, which roles need scheduling?~~ Answered 2026-11-24: any employee can be
    scheduled.
 10. Is a heuristic scheduler good enough, or is an optimization solver needed, and does one fit in
-    Workers? The week is small: about 8 employees, 6 open days of roughly 28 15-minute blocks, and
+    Workers? Partly answered 2026-11-24: HiGHS runs in Workers and solves a synthetic week in about a
+    second (feature 6, `spikes/highs/`). Still open: a deployed run, and choosing it. The week is small: about 8 employees, 6 open days of roughly 28 15-minute blocks, and
     3 places to work. The hard part is how the rules interact (a supervisor and two people on site,
     levels, Carol's teaching limit, minimum shift lengths, locked shifts, preferred hours). A greedy
     heuristic fills one block at a time and can paint itself into a corner; it needs repair passes

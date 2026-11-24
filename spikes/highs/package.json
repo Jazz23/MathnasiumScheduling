@@ -1,0 +1,8 @@
+{
+	"name": "highs-spike",
+	"private": true,
+	"type": "module",
+	"dependencies": {
+		"highs": "1.16.0"
+	}
+}
