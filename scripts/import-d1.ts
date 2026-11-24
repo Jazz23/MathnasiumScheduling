@@ -1,6 +1,6 @@
 // One-off: copies the Cloudflare D1 database into a stage's DynamoDB table,
 // for the move to AWS. Reads D1 with Wrangler (fetched by bunx, using the
-// wrangler.jsonc from the `main` branch) and writes with the AWS credentials
+// wrangler.jsonc from 57a2abf, the last Cloudflare commit) and writes with the AWS credentials
 // in your environment.
 //
 //   bun run import-d1 <TABLE_NAME> [d1-database-name]
@@ -24,7 +24,7 @@ process.env.TABLE_NAME = tableName;
 
 const configDir = mkdtempSync(join(tmpdir(), "import-d1-"));
 const config = join(configDir, "wrangler.jsonc");
-writeFileSync(config, execFileSync("git", ["show", "main:wrangler.jsonc"]));
+writeFileSync(config, execFileSync("git", ["show", "57a2abf:wrangler.jsonc"]));
 
 type Row = Record<string, unknown>;
 function select(sql: string): Row[] {
