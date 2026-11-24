@@ -3,12 +3,12 @@
 
 export const BLOCK_MIN = 15;
 
-type Level = "E" | "M" | "H"; // elementary, middle, high
-const LEVELS: Level[] = ["E", "M", "H"];
-const RATIO: Record<Level, number> = { E: 4, M: 4, H: 3 };
-const RANK: Record<Level, number> = { E: 0, M: 1, H: 2 };
+export type Level = "E" | "M" | "H"; // elementary, middle, high
+export const LEVELS: Level[] = ["E", "M", "H"];
+export const RATIO: Record<Level, number> = { E: 4, M: 4, H: 3 };
+export const RANK: Record<Level, number> = { E: 0, M: 1, H: 2 };
 
-interface Employee {
+export interface Employee {
 	id: string;
 	supervisor: boolean;
 	maxLevel: Level;
@@ -24,16 +24,16 @@ interface Employee {
 
 // Days: 0 Mon .. 3 Thu, 4 Fri (programs only), 6 Sun.
 // Open windows, in blocks from 12:00.
-const OPEN: Record<number, [number, number]> = {
+export const OPEN: Record<number, [number, number]> = {
 	0: [0, 28], // 12:00–19:00
 	1: [0, 28],
 	2: [0, 28],
 	3: [0, 28],
 	6: [0, 16], // 12:00–16:00
 };
-const CENTER_DAYS = [0, 1, 2, 3, 6];
+export const CENTER_DAYS = [0, 1, 2, 3, 6];
 
-interface Program {
+export interface Program {
 	id: string;
 	day: number;
 	start: number; // block from 12:00
@@ -41,7 +41,7 @@ interface Program {
 	needed: number;
 	travel: number; // blocks each way
 }
-const PROGRAMS: Program[] = [
+export const PROGRAMS: Program[] = [
 	{ id: "val_mon", day: 0, start: 9, end: 15, needed: 2, travel: 1 }, // 2:15–3:45
 	{ id: "val_fri", day: 4, start: 1, end: 7, needed: 2, travel: 1 }, // 12:15–1:45
 	{ id: "rio_tue", day: 1, start: 9, end: 15, needed: 3, travel: 1 },
@@ -64,7 +64,7 @@ export const EMPLOYEES: Employee[] = [
 ];
 
 // Deterministic pseudo-random demand: students at the center per block and level.
-function demand(day: number, b: number, level: Level): number {
+export function demand(day: number, b: number, level: Level): number {
 	const [, end] = OPEN[day];
 	const t = b / end; // 0..1 through the day
 	const peak = Math.exp(-((t - 0.65) ** 2) / 0.04); // after school
