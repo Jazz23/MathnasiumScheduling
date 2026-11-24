@@ -13,7 +13,7 @@ import {
   type Setup,
   type Window,
 } from "./api";
-import { WindowsEditor } from "./WindowsEditor";
+import { WeekCalendar, type CalKind } from "./WeekCalendar";
 
 // The roster (feature 2) with each person's availability and preferences
 // (feature 3). People come from Sling; everything else is entered here.
@@ -365,7 +365,13 @@ function AvailabilityEditor({
           </button>
         </p>
       )}
-      <WindowsEditor value={windows} onChange={setWindows} blank={{ weekday: 1, start: "13:00", end: "18:00" }} addLabel="Add available time" />
+      <WeekCalendar
+        value={windows.map((w) => ({ ...w, kind: "available" as const }))}
+        onChange={(next) => setWindows(next.map(({ weekday, start, end }) => ({ weekday, start, end })))}
+        kinds={AVAILABLE_KIND}
+        backdrop={suggestion?.windows ?? []}
+        backdropLabel={suggestion ? `Worked in the last ${suggestion.weeks} weeks` : undefined}
+      />
       <div className="radius-actions">
         <button type="button" className="radius-button" onClick={() => void save({ effectiveFrom, windows })}>
           Save availability
@@ -377,21 +383,22 @@ function AvailabilityEditor({
 
 type Preference = Window & { kind: "prefer" | "avoid" };
 
+const AVAILABLE_KIND: CalKind<"available">[] = [{ id: "available", label: "Available", className: "cal-available" }];
+const PREFERENCE_KINDS: CalKind<Preference["kind"]>[] = [
+  { id: "prefer", label: "Prefers", className: "cal-prefer" },
+  { id: "avoid", label: "Avoids", className: "cal-avoid" },
+];
+
 function PreferencesEditor({ employee, save }: { employee: Employee; save: (p: Preference[]) => Promise<void> }) {
   const [prefs, setPrefs] = useState<Preference[]>(employee.preferences);
   return (
     <>
-      <WindowsEditor<Preference>
+      <WeekCalendar
         value={prefs}
         onChange={setPrefs}
-        blank={{ kind: "avoid", weekday: 1, start: "13:00", end: "18:00" }}
-        addLabel="Add preference"
-        extra={(row, update) => (
-          <select value={row.kind} onChange={(e) => update({ kind: e.target.value as Preference["kind"] })} aria-label="Prefer or avoid">
-            <option value="prefer">Prefers</option>
-            <option value="avoid">Avoids</option>
-          </select>
-        )}
+        kinds={PREFERENCE_KINDS}
+        backdrop={employee.availability.at(-1)?.windows ?? []}
+        backdropLabel="Available (latest saved pattern)"
       />
       <div className="radius-actions">
         <button type="button" className="radius-button" onClick={() => void save(prefs)}>

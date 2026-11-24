@@ -218,7 +218,11 @@ its own origin.
 **Frontend**: `src/App.tsx` renders `src/RadiusLogin.tsx`, which shows the login form, then tabs:
 Demand (`src/DemandView.tsx`), Center (`src/CenterSetup.tsx`), Roster (`src/Roster.tsx`), the Radius
 schedule and the Sling panel. A tab mounts the first time it's opened and then stays mounted. The
-Sling panel links Sling, then shows Sling's app. `src/api.ts` has the API client and the response
+Sling panel links Sling, then shows Sling's app. Availability and preferences are drawn on a
+Google Calendar-style week view (`src/WeekCalendar.tsx`): drag to add a block, drag it to move or
+resize it, click it to delete it or switch prefer/avoid. Times snap to 15 minutes; overlapping
+blocks of one kind merge, and drawing over another kind replaces it. Opening hours and program
+sessions still use the row editor (`src/WindowsEditor.tsx`). `src/api.ts` has the API client and the response
 shapes, which have to be kept in step with the Worker's.
 
 ## Database
