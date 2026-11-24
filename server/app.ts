@@ -9,6 +9,7 @@ import { getItem, keys } from "./db";
 import { handleRadiusProxy } from "./radiusProxy";
 import { handleSling } from "./sling";
 import { handleDemand } from "./demandApi";
+import { handleDrafts } from "./draftApi";
 import { handleRoster } from "./roster";
 import { handleSetup } from "./setup";
 
@@ -32,7 +33,11 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     if (response) return response;
   }
 
-  const api = (await handleDemand(request, env, url)) ?? (await handleSetup(request, env, pathname)) ?? (await handleRoster(request, env, pathname));
+  const api =
+    (await handleDemand(request, env, url)) ??
+    (await handleSetup(request, env, pathname)) ??
+    (await handleRoster(request, env, pathname)) ??
+    (await handleDrafts(request, env, pathname));
   if (api) return api;
 
   if (pathname === "/api/db/health") {

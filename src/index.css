@@ -199,6 +199,15 @@ body {
 .demand-grid td.short {
   background: rgba(210, 38, 48, 0.35);
 }
+.draft-grid td {
+  min-width: 9rem;
+  text-align: left;
+  vertical-align: top;
+}
+.draft-grid tbody th {
+  text-align: left;
+  opacity: 1;
+}
 .plain-list {
   margin: 0.25rem 0 0.75rem;
   padding-left: 1.25rem;

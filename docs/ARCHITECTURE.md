@@ -38,6 +38,7 @@ API Lambda (server/app.ts)
   ├─ /api/auth/*, /api/sling ──> DynamoDB (accounts, sessions, stored logins)
   ├─ /api/setup/*, /api/roster/* ──> DynamoDB (center setup, roster) + Sling reads
   ├─ /api/demand ──> Radius reads + Sling reads + DynamoDB
+  ├─ /api/drafts/* ──> Radius reads + Sling reads + HiGHS (in the Lambda) + DynamoDB
   ├─ /radius/*   ── signed-in proxy ──> radius.mathnasium.com
   ├─ /sling/*    ── proxy ───────────> app.getsling.com
   └─ /sling/__api/* ── adds token ───> api.getsling.com
@@ -77,6 +78,8 @@ doesn't cache them, and passes on every header except `Host`.
 | `PUT /api/roster/:slingUserId/availability` | `server/roster.ts` | Replaces one availability pattern (`effectiveFrom` and its windows). |
 | `PUT /api/roster/:slingUserId/preferences` | `server/roster.ts` | Replaces a person's prefer/avoid times. |
 | `GET /api/roster/availability-suggestions?weeks=` | `server/roster.ts` | Each person's usual times from their past Sling shifts. |
+| `GET /api/drafts/:weekStart` | `server/draftApi.ts` | The latest draft for the week starting that Monday, or null. |
+| `POST /api/drafts/:weekStart/generate` | `server/draftApi.ts` | Generates a new draft for the week and stores it, replacing the last one. |
 | `GET /api/db/health` | `server/app.ts` | Checks DynamoDB. |
 
 Any other `/api/*` path returns 404 as JSON.
@@ -175,7 +178,7 @@ Everything Radius and Sling don't hold is in DynamoDB:
   its weekly sessions. Settings not saved yet take their defaults from `DEFAULT_SETTINGS` in
   `server/setup.ts`. Settings cover the presence rules, shift and break rules, travel, cadence and which
   Sling locations are the center and remote work.
-- **Roster**: one item per Sling user, holding their details, first-choice programs, availability
+- **Roster**: one item per Sling user, holding their details, assigned programs, availability
   and preferences. `POST /api/roster/sync` adds active Sling users who aren't on
   the roster, guessing their role from their Sling positions, and refreshes everyone's name, email,
   positions and active flag. The director's details are never overwritten.
@@ -183,6 +186,34 @@ Everything Radius and Sling don't hold is in DynamoDB:
   suggestions merge the shifts each person worked on each weekday over the last 8 weeks, at any
   location, read four weeks per Sling request.
 - Supervisors are the owner and assistant center directors (`SUPERVISOR_ROLES`).
+
+## Draft schedules
+
+`POST /api/drafts/:weekStart/generate` (`server/draftApi.ts`) reads the week from Radius (levels and
+appointments) and Sling (existing shifts and time off), one request after another, then solves it
+with `server/scheduler.ts` and stores the result as one item (`DRAFT#<weekStart>`, the draft as JSON).
+It runs within the request: Radius and Sling take a few seconds and the solver stops after 25
+seconds with the best draft so far, inside CloudFront's 60.
+
+**The model** (`solveWeek()`) is an integer program in CPLEX LP format, solved by HiGHS (npm
+`highs`, WebAssembly, loaded once per Lambda instance; `infra/stack.ts` copies `highs.wasm` next to
+the bundle). It plans in 15-minute blocks, per employee and day: working at the center or not, where
+each center shift starts, remote blocks only where there are online students, and one yes/no per
+school program session (the session plus the drive each way). Teaching is continuous, in
+instructors per level, so a mixed group uses each student's own ratio share. Hard rules are
+constraints (availability, approved time off, existing shifts, qualifications by grade, max hours,
+shift length, shifts per day, one place at a time, travel between home and the center). Coverage,
+presence, program staffing, minimum and preferred hours and teaching limits have slack variables
+with weights (`W` in `server/scheduler.ts`), so a draft always comes back and the slack is the
+coverage report. Existing Sling shifts are fixed: they count toward presence, teaching and program
+staffing. The presence rules apply over opening hours plus the setup and cleanup minutes around them.
+
+Simplifications for now: breaks are placed after solving, in the block nearest the middle of the
+shift where the others still cover the whole instructors' worth of students (a fraction over is
+fine for 10 minutes, decided 2026-11-24), and reported when no block allows it. The longest shift is enforced
+per day (with one shift a day, the default, that's the same thing). Fairness, consistency with
+previous weeks and test prep or assessment qualifications aren't modelled yet. Predicted
+(unbooked) students aren't in the demand until feature 5.
 
 ## Stored credentials
 

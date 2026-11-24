@@ -11,6 +11,7 @@
 //   CENTER              SETTINGS              center settings and opening hours
 //   CENTER              PROGRAM#<id>          a school program and its sessions
 //   CENTER              EMPLOYEE#<slingId>    a person on the roster, with availability and preferences
+//   CENTER              DRAFT#<YYYY-MM-DD>    the latest draft schedule for the week starting that Monday
 //   COUNTER             <name>                the last ID handed out for accounts or programs
 //
 // Items with a `ttl` (epoch seconds) are deleted by DynamoDB some time after
@@ -63,6 +64,8 @@ export const keys = {
   settings: (): Key => ({ pk: "CENTER", sk: "SETTINGS" }),
   program: (id: number): Key => ({ pk: "CENTER", sk: `PROGRAM#${id}` }),
   employee: (slingUserId: number): Key => ({ pk: "CENTER", sk: `EMPLOYEE#${slingUserId}` }),
+  /** The latest generated draft for the week starting on `weekStart` (a Monday). */
+  draft: (weekStart: string): Key => ({ pk: "CENTER", sk: `DRAFT#${weekStart}` }),
 };
 
 /** Seconds since the epoch, the unit of every stored timestamp except where noted. */

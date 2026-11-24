@@ -166,3 +166,61 @@ export function mondayOf(date: string): string {
   const day = new Date(date + "T00:00:00Z").getUTCDay();
   return addDays(date, -((day + 6) % 7));
 }
+
+export interface DraftShift {
+  slingUserId: number;
+  name: string;
+  date: string;
+  start: string;
+  end: string;
+  where: "center" | "remote" | "program";
+  programId: number | null;
+  slingLocationId: number | null;
+  teachingMinutes: number;
+  breakStart: string | null;
+  breakMissed: boolean;
+}
+
+export interface CoverageBlock {
+  time: string;
+  open: boolean;
+  neededInCenter: number;
+  neededOnline: number;
+  shortInCenter: number;
+  shortOnline: number;
+  onSite: number;
+  supervisors: number;
+  remote: number;
+  gaps: string[];
+}
+
+export interface Draft {
+  weekStart: string;
+  generatedAt: number;
+  status: string;
+  solveSeconds: number;
+  shifts: DraftShift[];
+  coverage: { date: string; blocks: CoverageBlock[] }[];
+  employees: {
+    slingUserId: number;
+    name: string;
+    draftedHours: number;
+    existingHours: number;
+    minHours: number | null;
+    preferredHours: number | null;
+    maxHours: number | null;
+    notes: string[];
+  }[];
+  programs: {
+    programId: number;
+    name: string;
+    date: string;
+    start: string;
+    end: string;
+    needed: number;
+    existing: number;
+    drafted: string[];
+    short: number;
+  }[];
+  warnings: string[];
+}

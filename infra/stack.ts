@@ -57,6 +57,15 @@ export class AppStack extends cdk.Stack {
         sourceMap: true,
         // Some dependencies call require() in an ES module bundle.
         banner: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);",
+        // The scheduler's solver (npm highs) loads highs.wasm from next to its
+        // module, which is the bundle once bundled.
+        commandHooks: {
+          beforeBundling: () => [],
+          beforeInstall: () => [],
+          afterBundling: (inputDir: string, outputDir: string) => [
+            `cp "${path.join(inputDir, "node_modules", "highs", "build", "highs.wasm")}" "${path.join(outputDir, "highs.wasm")}"`,
+          ],
+        },
       },
       logGroup: new logs.LogGroup(this, `${name}Logs`, {
         retention: logs.RetentionDays.THREE_MONTHS,

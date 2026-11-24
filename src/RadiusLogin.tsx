@@ -1,12 +1,14 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { CenterSetup } from "./CenterSetup";
 import { DemandView } from "./DemandView";
+import { DraftView } from "./DraftView";
 import { RadiusSchedule } from "./RadiusSchedule";
 import { Roster } from "./Roster";
 import { SlingPanel } from "./SlingPanel";
 
 const TABS = [
   { id: "demand", label: "Demand", render: () => <DemandView /> },
+  { id: "draft", label: "Draft", render: () => <DraftView /> },
   { id: "center", label: "Center", render: () => <CenterSetup /> },
   { id: "roster", label: "Roster", render: () => <Roster /> },
   { id: "radius", label: "Radius", render: () => <RadiusSchedule /> },

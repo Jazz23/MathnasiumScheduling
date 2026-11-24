@@ -329,8 +329,8 @@ Builds a draft from the demand, the employees' availability and preferences, and
   "nobody available Tue 6:30–7:00 pm"). It also lists breaks that couldn't fit.
 - For each employee: scheduled hours vs. preferred hours, and which preferences couldn't be met.
 
-**Approach (proposed 2026-11-24):** an integer program solved with HiGHS (npm `highs`), instead of
-starting with a greedy heuristic. A test on a synthetic week (`spikes/highs/`) solved it to the
+**Approach (decided 2026-11-24, built):** an integer program solved with HiGHS (npm `highs`), instead of
+starting with a greedy heuristic. See "Draft schedules" in docs/ARCHITECTURE.md for the model. A test on a synthetic week (`spikes/highs/`) solved it to the
 optimum in about a second, in the Workers runtime, using 44 MB. Shifts are written in the compact
 form (working or not per person and block, plus where each shift starts): listing every possible
 shift took 230–270 MB and several seconds. On Lambda the limits are 15 minutes and up to 10 GB, so
@@ -648,7 +648,7 @@ records let its accuracy be checked against past weeks right away.
 | 0. Foundations | Login with Radius, link Sling, embedded views, Cloudflare + D1 setup, then moved to AWS (Lambda, DynamoDB, CDK) on 2026-11-24 | Done |
 | 1. Read the data | Groundwork: generated types, staging environment, a Durable Object sign-in lock per account, Sling sign-in moved into a Workflow. Then read Radius appointments (with student levels, and whether each is online) and the ratio, and the Sling roster, locations, time off and existing shifts. Show booked demand per time block in the app. | Built 2026-11-24. Not yet: flagging appointments left over from ended enrollments. |
 | 2. Setup | Center setup (hours, presence rules, school programs, the remote location). Roster details: roles, levels, teaching limits, assigned programs, remote work, work-from-home days, hour preferences. Availability for each employee, suggested from past Sling shifts. | Built 2026-11-24 |
-| 3. Generate drafts | Scheduler v1 (heuristic) with the coverage report. No publishing yet. | Planned |
+| 3. Generate drafts | Scheduler v1 (HiGHS, decided 2026-11-24) with the coverage report, in the Draft tab. No publishing yet. | Built 2026-11-24. Not yet: fairness, consistency with previous weeks, test prep and assessment qualifications, breaks inside the model. |
 | 4. Review and edit | Calendar view of the draft, manual edits, locking, regenerate around locks. | Planned |
 | 5. Publish | Create, update and remove the app's shifts in Sling. | Planned |
 | 6. Predict attendance | Read students' sign-in/out history, learn unbooked students' patterns, show booked vs. predicted demand, director overrides, accuracy checks against past weeks. | Planned |
@@ -715,21 +715,10 @@ Answered questions are kept, struck through, with their answers.
    Deferred (2026-11-24).
 9. ~~Besides instructors, which roles need scheduling?~~ Answered 2026-11-24: any employee can be
    scheduled.
-10. Is a heuristic scheduler good enough, or is an optimization solver needed, and does one fit in
-    Workers? Partly answered 2026-11-24: HiGHS runs in Workers and solves a synthetic week in about a
-    second (feature 6, `spikes/highs/`). Deployed on the Free plan, it deploys but the solve is
-    stopped at Free's 10 ms of CPU, confirming phase 3 needs Workers Paid. Still open: a deployed
-    run on Paid, and choosing it. Since 2026-11-24 the app is on Lambda, where CPU time isn't
-    limited this way; still open is choosing HiGHS. The week is small: about 8 employees, 6 open days of roughly 28 15-minute blocks, and
-    3 places to work. The hard part is how the rules interact (a supervisor and two people on site,
-    levels, Carol's teaching limit, minimum shift lengths, locked shifts, preferred hours). A greedy
-    heuristic fills one block at a time and can paint itself into a corner; it needs repair passes
-    and can't tell "impossible" from "missed". An integer program states each rule once and returns
-    the best schedule, or proof that a rule can't be met, which the coverage report can explain. At
-    this size it should solve in seconds. The candidate is HiGHS compiled to WebAssembly (npm
-    `highs`, about 4.5 MB unpacked, within Workers' size limit), but it loads its WebAssembly in a way
-    Workers may not allow, so it needs a quick test. Google's CP-SAT has no WebAssembly build, so it
-    would need a server or a Cloudflare Container.
+10. ~~Is a heuristic scheduler good enough, or is an optimization solver needed?~~ Answered
+    2026-11-24: an optimization solver, HiGHS, running in the API Lambda (feature 6). A test on a
+    synthetic week (`spikes/highs/`) solved in about a second. The greedy heuristic
+    (`spikes/greedy/`) stays a fallback if HiGHS ever proves too slow on real weeks.
 11. ~~How cautious should staffing be for predicted students?~~ Answered 2026-11-24: the expected
     number, no margin.
 12. ~~How much teaching does Carol want?~~ Answered 2026-11-24: ideally not much, 50% of her time on
